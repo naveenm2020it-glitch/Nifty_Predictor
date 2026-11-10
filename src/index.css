@@ -305,3 +305,6 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 
 .vault-model-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
 .vault-research-result{max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:11px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font:9px/1.5 "DM Mono",monospace}
+
+.scenario-detail{font-size:9px;line-height:1.7;color:var(--muted);text-align:center;margin:5px 0 0}
+.scenario-disclaimer{font-size:9px;line-height:1.55;color:var(--muted);margin:10px 2px}
