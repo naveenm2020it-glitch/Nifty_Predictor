@@ -416,12 +416,13 @@ def run_evening_ingestion():
                 log.exception("Source %s failed", source_key)
                 outcomes.append({"source": source_key, "status": "missing", "error": str(exc)[:260]})
         feature_result = _store_feature_rows()
+        forecast_result = generate_next_session_prediction()
         required = {"nifty50_daily_ohlc_5y", "india_vix", "fo_bhavcopy", "participant_oi", "fii_derivatives", "fo_settlement", "fo_volatility"}
         good = {x.get("source") for x in outcomes if x.get("status") in ("downloaded", "already_archived")}
         complete = required.issubset(good)
         result = {"trade_date": trade_date.isoformat(), "complete_source_set": complete,
-                  "sources": outcomes, "features": feature_result,
-                  "prediction_status": "blocked_no_validated_model",
+                  "sources": outcomes, "features": feature_result, "forecast": forecast_result,
+                  "prediction_status": forecast_result.get("status", "not_generated"),
                   "note": "Downloads are archived with provenance. Model inference remains disabled until semantic validation and walk-forward model approval."}
         with connect() as conn:
             conn.execute("""
