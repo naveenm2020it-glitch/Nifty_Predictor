@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import connect, init_db
+from .pipeline import backfill_historical_features, pipeline_runs, run_evening_ingestion
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -53,18 +54,24 @@ def system_status():
         with connect() as conn:
             imports = conn.execute("SELECT COUNT(*) AS count, COALESCE(SUM(accepted_rows),0) AS rows, MAX(imported_at) AS latest FROM dataset_imports").fetchone()
             records = conn.execute("SELECT COUNT(*) AS count FROM dataset_records").fetchone()
+            source_files = conn.execute("SELECT COUNT(*) AS count, MAX(fetched_at) AS latest FROM source_downloads").fetchone()
+            features = conn.execute("SELECT COUNT(*) AS count, MAX(trade_date) AS latest FROM daily_feature_snapshots").fetchone()
+            latest_run = conn.execute("SELECT status,finished_at FROM ingestion_runs ORDER BY started_at DESC LIMIT 1").fetchone()
             models = conn.execute("SELECT COUNT(*) AS count FROM model_versions WHERE status = 'validated'").fetchone()
             forecasts = conn.execute("SELECT COUNT(*) AS count, MAX(generated_at) AS latest FROM predictions WHERE status = 'published'").fetchone()
         return {
             "api": "available", "database": "connected", "storage": "configured_database_url",
             "dataset_files": imports["count"], "accepted_source_rows": imports["rows"],
             "deduplicated_records": records["count"], "last_import_at": imports["latest"].isoformat() if imports["latest"] else None,
+            "official_source_files": source_files["count"], "last_official_download_at": source_files["latest"].isoformat() if source_files["latest"] else None,
+            "feature_snapshots": features["count"], "latest_feature_date": features["latest"].isoformat() if features["latest"] else None,
+            "last_ingestion_status": latest_run["status"] if latest_run else "not_run",
             "validated_models": models["count"], "published_predictions": forecasts["count"],
             "last_prediction_at": forecasts["latest"].isoformat() if forecasts["latest"] else None,
             "market_data": "awaiting_verified_source_ingestion" if not records["count"] else "archived_pending_semantic_validation",
             "models": "not_trained" if not models["count"] else "validated_model_available",
             "forecast": "not_calculated" if not forecasts["count"] else "published_forecast_available",
-            "evening_scheduler": "not_configured"
+            "evening_scheduler": "GitHub Actions schedule requires NIFTY_IQ_SCHEDULER_TOKEN secret" if os.getenv("SCHEDULER_TOKEN") else "not_configured"
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Database unavailable: {str(exc)[:160]}")
@@ -218,6 +225,45 @@ async def import_dataset(
     return {"dataset_id": import_id, "status": status, "accepted_rows": len(accepted), "rejected_rows": rejected,
             "new_records_from_file": inserted, "first_date": min(dates).isoformat(), "last_date": max(dates).isoformat(),
             "sha256": digest, "duplicate_file": False, "filtered_rows": filtered, "nifty_symbol_filter_applied": fo_symbol_filter_applied}
+
+@app.post("/api/v1/jobs/evening")
+def run_evening_job(scheduler_token: Optional[str] = Header(None, alias="X-Scheduler-Token")):
+    expected = os.getenv("SCHEDULER_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Scheduler is disabled until SCHEDULER_TOKEN is configured on the API service.")
+    if not scheduler_token or not hmac.compare_digest(scheduler_token, expected):
+        raise HTTPException(status_code=401, detail="Scheduler token is missing or invalid.")
+    try:
+        return run_evening_ingestion()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Evening ingestion failed: " + str(exc)[:300])
+
+
+@app.post("/api/v1/pipeline/features/backfill")
+def backfill_features(ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")):
+    expected = os.getenv("INGEST_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Backfill is disabled until INGEST_API_TOKEN is configured.")
+    if not ingest_token or not hmac.compare_digest(ingest_token, expected):
+        raise HTTPException(status_code=401, detail="Ingest token is missing or invalid.")
+    return backfill_historical_features()
+
+
+@app.get("/api/v1/pipeline/runs")
+def list_pipeline_runs(limit: int = 30):
+    return pipeline_runs(max(1, min(limit, 100)))
+
+
+@app.get("/api/v1/pipeline/source-downloads")
+def list_source_downloads(limit: int = 50):
+    with connect() as conn:
+        rows = conn.execute("""
+          SELECT source_key,dataset_key,source_name,source_url,file_name,report_date,
+                 fetched_at,sha256,byte_count,status,parsed_rows
+          FROM source_downloads ORDER BY fetched_at DESC LIMIT %s
+        """, (max(1, min(limit, 200)),)).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
 
 @app.get("/api/v1/pipeline/readiness")
 def pipeline_readiness():
