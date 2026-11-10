@@ -896,7 +896,7 @@ def validate_cloud_datasets():
     conflicts=sum(1 for values in by_date.values() if len(values)>1)
     spot_dates=sorted(by_date)
     span=(spot_dates[-1]-spot_dates[0]).days/365.25 if len(spot_dates)>1 else 0
-    spot_pass=len(spot_dates)>=300 and span>=4.8 and invalid==0 and conflicts==0
+    spot_pass=len(spot_dates)>=1000 and span>=4.8 and invalid==0 and conflicts==0
     def field_presence(rows,aliases):
         if not rows:return {"rows":0,"mapped_rows":0,"missing_rows":0,"fields":aliases}
         mapped=sum(1 for row in rows if all(_get(row["payload"],[field]) is not None for field in aliases))
@@ -910,11 +910,11 @@ def validate_cloud_datasets():
       "status":"passed_spot_only" if spot_pass else "blocked",
       "spot_ohlc":{"rows":len(spot),"valid_rows":valid,"invalid_rows":invalid,"distinct_dates":len(spot_dates),
         "first_date":spot_dates[0].isoformat() if spot_dates else None,"last_date":spot_dates[-1].isoformat() if spot_dates else None,
-        "history_years":round(span,2),"conflicting_dates":conflicts,"passed":spot_pass},
-      "fo_bhavcopy":{**fo_check,"passed":bool(fo and fo_check["mapped_rows"]>0)},
-      "participant_oi":{**participant_check,"passed":bool(participant)},
-      "fii_derivatives":{**fii_check,"passed":bool(fii)},
-      "vix_and_volatility":{**vix_check,"passed":bool(vix)},
+        "history_years":round(span,2),"required_distinct_dates":1000,"conflicting_dates":conflicts,"passed":spot_pass},
+      "fo_bhavcopy":{**fo_check,"has_mappable_rows":bool(fo and fo_check["mapped_rows"]>0),"full_semantic_validation":False},
+      "participant_oi":{**participant_check,"present":bool(participant),"full_semantic_validation":False},
+      "fii_derivatives":{**fii_check,"present":bool(fii),"full_semantic_validation":False},
+      "vix_and_volatility":{**vix_check,"present":bool(vix),"full_semantic_validation":False},
       "limitations":["This is field-presence and OHLC consistency validation, not exchange certification.",
         "Participant and FII field aliases require source-specific mapping before use as model features.",
         "FII derivatives statistics are aggregate index-segment context.",
