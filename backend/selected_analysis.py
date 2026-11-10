@@ -83,7 +83,7 @@ def _download_selected(trade_date: date):
     else:
         outcomes.append({"source":"nifty50_daily_ohlc","status":"already_archived","rows":len(spot)})
 
-    if not _rows("vix_volatility",trade_date):
+    if not src._source_exists("india_vix",trade_date):
         session = src.requests.Session()
         session.headers.update({"User-Agent":src.UA,"Referer":src.NIFTY_INDICES+"/reports/historical-data"})
         vix = [r for r in src._vix_rows(session,trade_date,trade_date)
@@ -179,7 +179,7 @@ def analyse_selected_session(trade_date: date, expiry: date, itm_count: int=7, o
     chain=[]
     for strike in chosen:
         sides=contracts[strike]; ce=sides.get("CE",{}); pe=sides.get("PE",{})
-        chain.append({"strike":strike,"moneyness":"ATM" if strike==atm else ("ITM" if strike<close else "OTM"),
+        chain.append({"strike":strike,"moneyness":"ATM" if strike==atm else ("BELOW SPOT" if strike<close else "ABOVE SPOT"),
           "ce_ltp":ce.get("close"),"ce_oi":ce.get("oi"),"ce_change_oi":ce.get("change_oi"),"ce_volume":ce.get("volume"),
           "pe_ltp":pe.get("close"),"pe_oi":pe.get("oi"),"pe_change_oi":pe.get("change_oi"),"pe_volume":pe.get("volume")})
     all_ce=sum(v.get("CE",{}).get("oi",0) for v in contracts.values())
