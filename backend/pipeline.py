@@ -788,6 +788,7 @@ def train_walk_forward_model():
       "majority_baseline_accuracy":float(accuracy_score(actual,base)),
       "beats_majority_baseline":bool(accuracy_score(actual,pred)>accuracy_score(actual,base)),
       "method":"Expanding-window chronological evaluation; preprocessing fitted within each training window.",
+      "validation_gate":{"minimum_oos_samples":100,"minimum_folds":3,"minimum_balanced_accuracy":0.52,"maximum_brier_score":0.26,"must_beat_majority_baseline":True},
       "interpretation":"Research evaluation only; not proof of future profitability or calibrated trading odds."}
     final_model=make_pipeline(StandardScaler(),LogisticRegression(max_iter=1500,class_weight="balanced",random_state=42))
     final_model.fit(X,y)
@@ -797,7 +798,7 @@ def train_walk_forward_model():
       "training_samples":n,"first_sample":samples[0]["date"].isoformat(),"last_sample":samples[-1]["date"].isoformat(),
       "model_type":"StandardScaler + LogisticRegression",
       "label_definition":"1 when next available NIFTY daily close is greater than current close; ties excluded."}
-    status="validated" if len(actual)>=100 and len(fold_metrics)>=3 else "evaluated"
+    status="validated" if len(actual)>=100 and len(fold_metrics)>=3 and metrics["balanced_accuracy"]>=0.52 and metrics["brier_score"]<0.26 and metrics["beats_majority_baseline"] else "rejected"
     with connect() as conn:
         model_row=conn.execute("""INSERT INTO model_versions(model_name,version,training_started_at,training_completed_at,training_cutoff,feature_schema,validation_metrics,status)
           VALUES (%s,%s,NOW(),NOW(),%s,%s,%s,%s) RETURNING id""",
