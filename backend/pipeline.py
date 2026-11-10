@@ -556,7 +556,12 @@ def _run_five_year_history(job_id, start_date, end_date):
         session = requests.Session()
         session.headers.update({"User-Agent": UA, "Content-Type": "application/json; charset=UTF-8",
             "X-Requested-With": "XMLHttpRequest", "Referer": NIFTY_INDICES + "/reports/historical-data"})
-        spot_rows = _nifty_index_rows(session, "getHistoricaldatatabletoString", start_date, end_date, "NIFTY 50")
+        spot_rows = []
+        chunk_start = start_date
+        while chunk_start <= end_date:
+            chunk_end = min(end_date, chunk_start + timedelta(days=364))
+            spot_rows.extend(_nifty_index_rows(session, "getHistoricaldatatabletoString", chunk_start, chunk_end, "NIFTY 50"))
+            chunk_start = chunk_end + timedelta(days=1)
         spot_rows = sorted(spot_rows, key=lambda r: _parse_date(r.get("HistoricalDate")) or date.min)
         valid_spot = []
         for row in spot_rows:
@@ -579,7 +584,12 @@ def _run_five_year_history(job_id, start_date, end_date):
             downloaded += 1
 
         try:
-            vix_rows = _vix_rows(session, start_date, end_date)
+            vix_rows = []
+            chunk_start = start_date
+            while chunk_start <= end_date:
+                chunk_end = min(end_date, chunk_start + timedelta(days=364))
+                vix_rows.extend(_vix_rows(session, chunk_start, chunk_end))
+                chunk_start = chunk_end + timedelta(days=1)
             vix_by_date = {}
             for row in vix_rows:
                 d = _parse_date(row.get("date") or row.get("HistoricalDate"))
