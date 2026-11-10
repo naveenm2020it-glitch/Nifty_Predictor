@@ -302,3 +302,6 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 .vault-history-coverage-track i{display:block;height:100%;border-radius:99px;background:var(--accent)}
 .vault-history-coverage-note{display:block;line-height:1.5;margin-top:10px}
 @media(max-width:760px){.vault-history-coverage-grid{grid-template-columns:1fr}.vault-history-coverage-item>div:first-child{align-items:flex-start;flex-direction:column}}
+
+.vault-model-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
+.vault-research-result{max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:11px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font:9px/1.5 "DM Mono",monospace}
