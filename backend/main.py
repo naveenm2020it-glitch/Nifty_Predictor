@@ -522,14 +522,22 @@ def selected_analysis_prepare_status(job_id: str):
 def run_selected_analysis(payload: dict):
     try:
         selected_date = date.fromisoformat(str(payload.get("trade_date") or ""))
-        expiry = date.fromisoformat(str(payload.get("expiry") or ""))
     except ValueError:
-        raise HTTPException(status_code=422, detail="trade_date and expiry must use YYYY-MM-DD.")
-    if expiry < selected_date:
-        raise HTTPException(status_code=422, detail="Expiry cannot be earlier than selected trade date.")
+        raise HTTPException(status_code=422, detail="trade_date must use YYYY-MM-DD.")
+    from .selected_analysis import expiries_for_date
+    expiry_raw = str(payload.get("expiry") or "").strip()
+    if not expiry_raw:
+        choices = [x.isoformat() for x in expiries_for_date(selected_date)]
+        if len(choices) == 1:
+            expiry_raw = choices[0]
+        elif len(choices) > 1:
+            return {"status":"expiry_selection_required","trade_date":selected_date.isoformat(),"expiries":choices,
+                    "message":"More than one NIFTY expiry is available. Select the required expiry and click Analyse again."}
+        else:
+            raise HTTPException(status_code=422, detail="No verified NIFTY expiry is available for this date.")
     try:
-        return analyse_selected_session(selected_date,expiry,
-            int(payload.get("itm_count",7)),int(payload.get("otm_count",7)),download_if_missing=True)
+        expiry = date.fromisoformat(expiry_raw)
+        return analyse_selected_session(selected_date,expiry,download_if_missing=False)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
