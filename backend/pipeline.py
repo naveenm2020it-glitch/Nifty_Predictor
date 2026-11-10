@@ -444,7 +444,7 @@ def run_evening_ingestion():
                     (FEATURE_SCHEMA,)
                 ).fetchone()["count"]
                 latest_model = conn.execute(
-                    "SELECT training_completed_at FROM model_versions WHERE status='validated' ORDER BY created_at DESC LIMIT 1"
+                    "SELECT training_completed_at,status FROM model_versions ORDER BY created_at DESC LIMIT 1"
                 ).fetchone()
             trained_at = latest_model["training_completed_at"] if latest_model else None
             if trained_at is not None:
