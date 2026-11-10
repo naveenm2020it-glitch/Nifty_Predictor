@@ -453,6 +453,33 @@ def research_patterns():
         raise HTTPException(status_code=503, detail="Historical candle-pattern analytics unavailable: " + str(exc)[:220])
 
 
+@app.get("/api/v1/research/futures")
+def research_futures():
+    with connect() as conn:
+        rows = conn.execute("""
+          SELECT trade_date,payload FROM dataset_records
+          WHERE dataset_key='fo_bhavcopy' ORDER BY trade_date DESC LIMIT 10000
+        """).fetchall()
+    if not rows:
+        return {"status":"no_data","items":[]}
+    latest_date=max(r["trade_date"] for r in rows)
+    items=[]
+    for row in rows:
+        if row["trade_date"] != latest_date:
+            continue
+        p=row["payload"]
+        symbol=str(p.get("TckrSymb") or p.get("Symbol") or "").upper()
+        option_type=str(p.get("OptnTp") or "").upper()
+        if symbol!="NIFTY" or option_type in ("CE","PE"):
+            continue
+        items.append({"expiry":p.get("XpryDt"),"instrument":p.get("FinInstrmNm") or p.get("FinInstrmTp") or "NIFTY future",
+          "close":p.get("ClsPric"),"open_interest":p.get("OpnIntrst"),
+          "change_oi":p.get("ChngInOpnIntrst"),"volume":p.get("TtlTradgVol"),
+          "settlement":p.get("SttlmPric")})
+    return {"status":"available" if items else "unmapped","trade_date":latest_date.isoformat(),"items":items[:100],
+      "note":"Historical EOD NIFTY futures records from archived bhavcopy. No live futures quote or guaranteed basis calculation."}
+
+
 @app.get("/api/v1/research/participants")
 def research_participants():
     with connect() as conn:
