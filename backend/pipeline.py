@@ -868,3 +868,55 @@ def generate_next_session_prediction():
            json.dumps({"prediction_id":saved["id"],"model_version":model_row["version"],"session_date":next_day.isoformat()})))
     return {"status":"published","prediction_id":saved["id"],"session_date":next_day.isoformat(),
       "model_version":model_row["version"],"scenarios":scenarios}
+
+
+def validate_cloud_datasets():
+    """Run semantic checks on archived records; reports field coverage without inventing data."""
+    from collections import defaultdict
+    with connect() as conn:
+        spot=conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='spot_ohlc' ORDER BY trade_date").fetchall()
+        fo=conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='fo_bhavcopy'").fetchall()
+        participant=conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='participant_oi'").fetchall()
+        fii=conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='fii_derivatives'").fetchall()
+        vix=conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='vix_volatility'").fetchall()
+    by_date=defaultdict(set); valid=0; invalid=0
+    for row in spot:
+        p=row["payload"]
+        vals=[_clean_number(_get(p,[name])) for name in (["OPEN","Open","open"],["HIGH","High","high"],["LOW","Low","low"],["CLOSE","Close","close"])]
+        if any(v is None or v<=0 for v in vals):
+            invalid+=1; continue
+        o,h,l,cl=vals
+        if h<max(o,cl,l) or l>min(o,cl,h):
+            invalid+=1; continue
+        valid+=1; by_date[row["trade_date"]].add(tuple(round(v,5) for v in vals))
+    conflicts=sum(1 for values in by_date.values() if len(values)>1)
+    spot_dates=sorted(by_date)
+    span=(spot_dates[-1]-spot_dates[0]).days/365.25 if len(spot_dates)>1 else 0
+    spot_pass=len(spot_dates)>=300 and span>=4.8 and invalid==0 and conflicts==0
+    def field_presence(rows,aliases):
+        if not rows:return {"rows":0,"mapped_rows":0,"missing_rows":0,"fields":aliases}
+        mapped=sum(1 for row in rows if all(_get(row["payload"],[field]) is not None for field in aliases))
+        return {"rows":len(rows),"mapped_rows":mapped,"missing_rows":len(rows)-mapped,"fields":aliases}
+    fo_fields=["TckrSymb","XpryDt","OptnTp","ClsPric","OpnIntrst","ChngInOpnIntrst","TtlTradgVol"]
+    fo_check=field_presence(fo,fo_fields)
+    participant_check=field_presence(participant,["Client Type"])
+    fii_check={"rows":len(fii),"scope":"Aggregate index-segment FII derivatives context; not NIFTY-underlying-only."}
+    vix_check=field_presence(vix,["CLOSE"])
+    result={
+      "status":"passed_spot_only" if spot_pass else "blocked",
+      "spot_ohlc":{"rows":len(spot),"valid_rows":valid,"invalid_rows":invalid,"distinct_dates":len(spot_dates),
+        "first_date":spot_dates[0].isoformat() if spot_dates else None,"last_date":spot_dates[-1].isoformat() if spot_dates else None,
+        "history_years":round(span,2),"conflicting_dates":conflicts,"passed":spot_pass},
+      "fo_bhavcopy":{**fo_check,"passed":bool(fo and fo_check["mapped_rows"]>0)},
+      "participant_oi":{**participant_check,"passed":bool(participant)},
+      "fii_derivatives":{**fii_check,"passed":bool(fii)},
+      "vix_and_volatility":{**vix_check,"passed":bool(vix)},
+      "limitations":["This is field-presence and OHLC consistency validation, not exchange certification.",
+        "Participant and FII field aliases require source-specific mapping before use as model features.",
+        "FII derivatives statistics are aggregate index-segment context.",
+        "Only the NIFTY daily OHLC series is used by the current direction baseline."],
+    }
+    with connect() as conn:
+        conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
+          ("cloud_semantic_validation","Cloud dataset semantic validation completed",json.dumps(result)))
+    return result
