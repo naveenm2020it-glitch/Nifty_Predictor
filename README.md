@@ -97,3 +97,10 @@ Research software only. NIFTY 50 scope. No broker integration, order execution, 
 
 ### NSE holiday-aware session dates
 The daily report now chooses the next configured NSE trading session rather than the next weekday. The 2026 NSE equity holiday calendar and the 8-Nov-2026 Muhurat special session are in `backend/market_calendar.py`. Update this file when NSE publishes the next annual holiday circular; future-year dates are not assumed to be known automatically.
+
+
+### Date- and expiry-selected analysis
+- `GET /api/v1/analysis/dates` lists archived NIFTY spot dates.
+- `POST /api/v1/analysis/prepare` accepts `{"trade_date":"YYYY-MM-DD"}`, checks the selected NSE session, downloads missing official NIFTY 50 / India VIX / F&O bhavcopy / participant / FII reports, archives source files and returns expiries detected from NIFTY contracts.
+- `POST /api/v1/analysis/run` accepts trade date, selected expiry and ITM/OTM strike counts. It builds independent price, options, participant, volatility/futures and candle agents, then combines only available agent evidence. Reports are persisted by trade date + expiry in PostgreSQL.
+- Option chain values are historical bhavcopy closing values. The system deliberately skips executable CE/PE entry prices when no live option feed is available.
