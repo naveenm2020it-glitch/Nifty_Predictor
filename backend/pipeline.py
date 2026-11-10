@@ -489,7 +489,7 @@ def run_evening_ingestion():
         for key in ("OPEN", "HIGH", "LOW", "CLOSE"):
             if _clean_number(spot.get(key)) is None:
                 raise RuntimeError("NIFTY 50 OHLC row is incomplete; daily run stopped.")
-        outcomes.append(_insert_source("spot_ohlc", "nifty50_daily_ohlc_5y", "NSE Indices — NIFTY 50 five-year historical OHLC",
+        outcomes.append(_insert_source("spot_ohlc", "nifty50_daily_ohlc", "NSE Indices — NIFTY 50 five-year historical OHLC",
             (spot_rows[0].get("_source_url") or NIFTY_INDICES + "/reports/historical-data"), "nifty50_" + trade_date.isoformat() + ".json",
             trade_date, json.dumps(spot_rows).encode(), spot_rows))
 
@@ -560,35 +560,14 @@ def run_evening_ingestion():
                 log.exception("Source %s failed", source_key)
                 outcomes.append({"source": source_key, "status": "missing", "error": str(exc)[:260]})
         feature_result = _store_feature_rows()
-        training_result = {"status": "not_due"}
-        forecast_result = {"status": "blocked_stale_or_missing_features"}
-        feature_is_current = feature_result.get("status") == "stored" and feature_result.get("trade_date") == trade_date.isoformat()
-        if feature_is_current:
-            with connect() as conn:
-                feature_count = conn.execute(
-                    "SELECT COUNT(*) AS count FROM daily_feature_snapshots WHERE feature_schema_version=%s",
-                    (FEATURE_SCHEMA,)
-                ).fetchone()["count"]
-                latest_model = conn.execute(
-                    "SELECT training_completed_at,status FROM model_versions ORDER BY created_at DESC LIMIT 1"
-                ).fetchone()
-            trained_at = latest_model["training_completed_at"] if latest_model else None
-            if trained_at is not None:
-                trained_at = trained_at.replace(tzinfo=IST) if trained_at.tzinfo is None else trained_at.astimezone(IST)
-            retrain_due = latest_model is None or trained_at is None or (datetime.now(IST) - trained_at).days >= 30
-            if int(feature_count or 0) >= 301 and retrain_due:
-                try:
-                    training_result = train_walk_forward_model()
-                except Exception as exc:
-                    training_result = {"status": "failed", "error": str(exc)[:240]}
-            forecast_result = generate_next_session_prediction()
-        required = {"nifty50_daily_ohlc_5y", "india_vix", "fo_bhavcopy", "participant_oi", "fii_derivatives", "fo_settlement", "fo_volatility"}
+        daily_report = generate_daily_evidence_report()
+        required = {"nifty50_daily_ohlc", "india_vix", "fo_bhavcopy", "participant_oi", "fii_derivatives", "fo_settlement", "fo_volatility"}
         good = {x.get("source") for x in outcomes if x.get("status") in ("downloaded", "already_archived")}
         complete = required.issubset(good)
         result = {"trade_date": trade_date.isoformat(), "complete_source_set": complete,
-                  "sources": outcomes, "features": feature_result, "model_training": training_result, "forecast": forecast_result,
-                  "prediction_status": forecast_result.get("status", "not_generated"),
-                  "note": "Daily features update only after a current NIFTY session row is archived. A validated model is retrained at most every 30 days when at least 301 feature snapshots exist; forecasts are blocked if the latest feature date is stale."}
+                  "sources": outcomes, "features": feature_result, "daily_report": daily_report,
+                  "prediction_status": daily_report.get("status", "not_generated"),
+                  "note": "Daily incremental mode: fetch the latest available exchange session, append it to cloud history, update rolling indicators and generate a next-session evidence report. No five-year backfill or model-training gate is required."}
         with connect() as conn:
             conn.execute("""
               UPDATE ingestion_runs SET status=%s,finished_at=NOW(),details=%s
@@ -1051,6 +1030,119 @@ def train_walk_forward_model():
            json.dumps({"model_id":model_row["id"],"version":version,"status":status,"metrics":metrics})))
     return {"status":status,"model_id":model_row["id"],"version":version,"training_samples":n,"metrics":metrics,"schema":schema}
 
+
+
+def generate_daily_evidence_report():
+    """Publish a daily, source-grounded next-session report without a five-year model gate."""
+    with connect() as conn:
+        spot_rows = conn.execute("""
+          SELECT trade_date,payload FROM dataset_records
+          WHERE dataset_key='spot_ohlc' ORDER BY trade_date DESC LIMIT 60
+        """).fetchall()
+        latest = conn.execute("SELECT MAX(trade_date) AS d FROM dataset_records WHERE dataset_key='spot_ohlc'").fetchone()
+        if not latest or not latest["d"]:
+            return {"status":"blocked_no_daily_spot_data"}
+        trade_date = latest["d"]
+        fo = conn.execute("SELECT payload FROM dataset_records WHERE dataset_key='fo_bhavcopy' AND trade_date=%s",(trade_date,)).fetchall()
+        participants = conn.execute("SELECT payload FROM dataset_records WHERE dataset_key='participant_oi' AND trade_date=%s",(trade_date,)).fetchall()
+        fii = conn.execute("SELECT payload FROM dataset_records WHERE dataset_key='fii_derivatives' AND trade_date=%s",(trade_date,)).fetchall()
+        vix = conn.execute("SELECT payload FROM dataset_records WHERE dataset_key='vix_volatility' AND trade_date=%s",(trade_date,)).fetchall()
+
+    by_date = {}
+    for row in spot_rows:
+        p = row["payload"]
+        vals = [_clean_number(_get(p,[k])) for k in (["OPEN","Open","open"],["HIGH","High","high"],["LOW","Low","low"],["CLOSE","Close","close"])]
+        if any(v is None or v<=0 for v in vals): continue
+        o,h,l,c = vals
+        if h<max(o,c,l) or l>min(o,c,h): continue
+        by_date[row["trade_date"]] = {"open":o,"high":h,"low":l,"close":c}
+    candles = [by_date[d] for d in sorted(by_date)]
+    if not candles: return {"status":"blocked_invalid_daily_ohlc","trade_date":trade_date.isoformat()}
+    last = candles[-1]; prev = candles[-2] if len(candles)>1 else None
+    close = last["close"]
+    atr = sum(x["high"]-x["low"] for x in candles[-14:])/len(candles[-14:])
+    sma5 = sum(x["close"] for x in candles[-5:])/min(5,len(candles))
+    sma20 = sum(x["close"] for x in candles[-20:])/min(20,len(candles))
+    ret = (close/prev["close"]-1)*100 if prev else 0.0
+    location = (close-last["low"])/max(last["high"]-last["low"],1e-9)
+    price_score = (1 if close>sma20 else -1 if close<sma20 else 0)+(1 if sma5>sma20 else -1 if sma5<sma20 else 0)+(1 if location>=.65 else -1 if location<=.35 else 0)
+    price = {"status":"analysed","bias":"bullish" if price_score>=2 else "bearish" if price_score<=-2 else "neutral",
+      "evidence":{"close":close,"daily_return_pct":round(ret,3),"sma5":round(sma5,2),"sma20":round(sma20,2),
+      "close_location":round(location,3),"atr14_or_available":round(atr,2),"sessions_available":len(candles)}}
+
+    ce_oi=pe_oi=ce_chg=pe_chg=0.0; ce_n=pe_n=0
+    for row in fo:
+        p=row["payload"]; typ=str(_get(p,["OptnTp","Option Type","OptionType"]) or "").upper()
+        oi=_clean_number(_get(p,["OpnIntrst","Open Interest","OI"])) or 0.0
+        chg=_clean_number(_get(p,["ChngInOpnIntrst","Change in OI","Chg in OI"])) or 0.0
+        if typ in ("CE","CALL"): ce_oi+=oi; ce_chg+=chg; ce_n+=1
+        if typ in ("PE","PUT"): pe_oi+=oi; pe_chg+=chg; pe_n+=1
+    pcr=pe_oi/ce_oi if ce_oi else None
+    options={"status":"analysed" if ce_n and pe_n else "missing_or_unmapped",
+      "bias":"bullish" if pcr is not None and pcr>1.1 and pe_chg>0 else "bearish" if pcr is not None and pcr<.85 and ce_chg>0 else "neutral",
+      "evidence":{"ce_contracts":ce_n,"pe_contracts":pe_n,"call_oi":ce_oi,"put_oi":pe_oi,
+      "put_call_oi_ratio":round(pcr,3) if pcr is not None else None,"call_change_oi":ce_chg,"put_change_oi":pe_chg},
+      "note":"Only recognized NIFTY CE/PE contracts are counted; Max Pain is not claimed."}
+
+    participant_map={}
+    for row in participants:
+        p=row["payload"]; label=str(_get(p,["Client Type","Participant","Participant Type"]) or "unknown").upper()
+        longv=_clean_number(_get(p,["Future Index Long","FutureIndexLong"]))
+        shortv=_clean_number(_get(p,["Future Index Short","FutureIndexShort"]))
+        if longv is not None and shortv is not None: participant_map[label]={"long":longv,"short":shortv,"net":longv-shortv}
+    participant={"status":"analysed" if participant_map else "missing_or_unmapped","evidence":participant_map,
+      "bias":"bullish" if any("FII" in k and v["net"]>0 for k,v in participant_map.items()) else "bearish" if any("FII" in k and v["net"]<0 for k,v in participant_map.items()) else "neutral"}
+
+    vix_close=None
+    for row in vix:
+        vix_close=_clean_number(_get(row["payload"],["CLOSE","Close","India VIX","VIX","ClsPric"]))
+        if vix_close is not None: break
+    futures=[r["payload"] for r in fo if "FUT" in str(_get(r["payload"],["FinInstrmTp","Instrument","InstType"]) or "").upper()
+             and str(_get(r["payload"],["TckrSymb","Symbol","Undrlyg"]) or "").upper()=="NIFTY"]
+    fut_close=_clean_number(_get(futures[0],["ClsPric","Close"])) if futures else None
+    futures_agent={"status":"analysed" if vix_close is not None or fut_close is not None else "missing_or_unmapped",
+      "evidence":{"india_vix_close":vix_close,"nifty_future_close":fut_close,
+      "futures_basis_points":round(fut_close-close,2) if fut_close is not None else None},"bias":"neutral"}
+    fii_agent={"status":"context_available" if fii else "missing","bias":"neutral",
+      "evidence":{"rows":len(fii),"scope":"Aggregate index-segment FII context, not NIFTY-only."}}
+    recent=[(candles[i]["close"]/candles[i-1]["close"]-1)*100 for i in range(max(1,len(candles)-20),len(candles))]
+    pattern={"status":"analysed" if len(candles)>=5 else "limited_sample",
+      "bias":"bullish" if sum(recent[-5:])>0 else "bearish" if sum(recent[-5:])<0 else "neutral",
+      "evidence":{"sessions_available":len(candles),"positive_days_last_20":sum(x>0 for x in recent),
+      "negative_days_last_20":sum(x<0 for x in recent),"last_5_return_sum_pct":round(sum(recent[-5:]),3)}}
+
+    agents={"price_structure":price,"options_derivatives":options,"participant_positioning":participant,
+      "fii_context":fii_agent,"futures_volatility":futures_agent,"recent_pattern":pattern}
+    votes=[price_score]
+    if options["status"]=="analysed": votes.append(1 if options["bias"]=="bullish" else -1 if options["bias"]=="bearish" else 0)
+    if participant["status"]=="analysed": votes.append(1 if participant["bias"]=="bullish" else -1 if participant["bias"]=="bearish" else 0)
+    total=sum(votes); bias="bullish" if total>=2 else "bearish" if total<=-2 else "range_or_wait"
+    next_day=trade_date+timedelta(days=1)
+    while next_day.weekday()>=5: next_day+=timedelta(days=1)
+    quality={"spot_sessions_used":len(candles),"fo_rows":len(fo),"participant_rows":len(participants),
+      "fii_rows":len(fii),"vix_rows":len(vix),"missing_agents":[k for k,v in agents.items() if v["status"] in ("missing","missing_or_unmapped")]}
+    scenarios={"bias":bias,"probability_up":None,"probability_down":None,"reference_close":close,"atr14":round(atr,2),
+      "agents":agents,"data_quality":quality,
+      "bullish":{"condition":"Break and sustain above the latest session high.","trigger_reference":round(last["high"],2),
+        "target_zone":[round(close+.5*atr,2),round(close+atr,2)],"invalidation":round(last["low"],2)},
+      "bearish":{"condition":"Break and sustain below the latest session low.","trigger_reference":round(last["low"],2),
+        "target_zone":[round(close-atr,2),round(close-.5*atr,2)],"invalidation":round(last["high"],2)},
+      "range":{"condition":"If neither side confirms, wait.","lower_reference":round(close-.35*atr,2),"upper_reference":round(close+.35*atr,2)},
+      "latest_input_date":trade_date.isoformat(),
+      "warning":"Daily evidence-based research, not a calibrated probability or guaranteed forecast. Next session date is a weekday estimate; check NSE holidays."}
+    with connect() as conn:
+        old=conn.execute("SELECT id FROM predictions WHERE session_date=%s AND model_version_id IS NULL ORDER BY generated_at DESC LIMIT 1",(next_day,)).fetchone()
+        if old:
+            saved=conn.execute("UPDATE predictions SET generated_at=NOW(),input_cutoff=%s,data_quality=%s,scenarios=%s,status='published' WHERE id=%s RETURNING id",
+              (trade_date,json.dumps(quality),json.dumps(scenarios),old["id"])).fetchone()
+        else:
+            saved=conn.execute("INSERT INTO predictions(session_date,model_version_id,input_cutoff,data_quality,scenarios,status) VALUES (%s,NULL,%s,%s,%s,'published') RETURNING id",
+              (next_day,trade_date,json.dumps(quality),json.dumps(scenarios))).fetchone()
+        conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
+          ("daily_evidence_report","Daily incremental next-session report saved without a five-year model gate",
+          json.dumps({"prediction_id":saved["id"],"input_date":trade_date.isoformat(),"session_date":next_day.isoformat(),"quality":quality})))
+    return {"status":"published","prediction_id":saved["id"],"input_date":trade_date.isoformat(),"session_date":next_day.isoformat(),
+      "analysis_mode":"daily_incremental_evidence","scenarios":scenarios}
 
 def generate_next_session_prediction():
     """Generate a next-session directional research scenario from the latest validated model."""
