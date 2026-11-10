@@ -34,6 +34,13 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+    with connect() as conn:
+        conn.execute("""
+          UPDATE historical_download_jobs
+          SET status='interrupted', updated_at=NOW(),
+              error=COALESCE(error, 'API process restarted; start the download again to continue missing dates.')
+          WHERE status IN ('queued','running')
+        """)
 
 @app.get("/")
 def root():
