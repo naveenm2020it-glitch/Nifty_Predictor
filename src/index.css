@@ -312,3 +312,7 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 .report-downloads{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}
 .report-downloads a{display:inline-flex;align-items:center;padding:9px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--accent);font:700 10px "DM Sans";text-decoration:none}
 .report-downloads a:hover{border-color:var(--accent);background:var(--accent-soft)}
+
+.vault-history-research{display:grid;gap:5px;margin-top:9px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)}
+.vault-history-research b{font-size:9px;color:var(--text)}
+.vault-history-research span,.vault-history-research small{font-size:8px;line-height:1.5;color:var(--muted)}
