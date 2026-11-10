@@ -56,9 +56,9 @@ class PipelineParserTests(unittest.TestCase):
         response.status_code = 200
         response.headers = {"Content-Type": "text/csv"}
         response.content = (
-            b"Index Name,Index Date,Open,High,Low,Closing,Volume,Turnover\\n"
-            b"Nifty 50,09-Nov-2026,25000,25100,24900,25050,12345,1000\\n"
-            b"Nifty Bank,09-Nov-2026,50000,50200,49900,50100,23456,2000\\n"
+            b"Index Name,Index Date,Open,High,Low,Closing,Volume,Turnover\n"
+            b"Nifty 50,09-Nov-2026,25000,25100,24900,25050,12345,1000\n"
+            b"Nifty Bank,09-Nov-2026,50000,50200,49900,50100,23456,2000\n"
         )
         session = Mock()
         session.get.return_value = response
