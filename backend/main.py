@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .db import connect, init_db
-from .pipeline import backfill_historical_features, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, train_walk_forward_model, validate_cloud_datasets
+from .pipeline import backfill_historical_features, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, summarize_nifty_options, summarize_price_patterns, train_walk_forward_model, validate_cloud_datasets
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -435,6 +435,35 @@ def research_summary():
       "prediction_available": bool(latest_model and latest_model["status"] == "validated"),
       "important_scope": "The current trained baseline predicts next available daily NIFTY close direction only. It does not model option premiums, intraday 15-minute targets, Greeks or execution."
     }
+
+
+@app.get("/api/v1/research/options")
+def research_options():
+    try:
+        return summarize_nifty_options()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Historical options analytics unavailable: " + str(exc)[:220])
+
+
+@app.get("/api/v1/research/patterns")
+def research_patterns():
+    try:
+        return summarize_price_patterns()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Historical candle-pattern analytics unavailable: " + str(exc)[:220])
+
+
+@app.get("/api/v1/research/participants")
+def research_participants():
+    with connect() as conn:
+        rows = conn.execute("""
+          SELECT trade_date,payload FROM dataset_records
+          WHERE dataset_key='participant_oi'
+          ORDER BY trade_date DESC,id DESC LIMIT 30
+        """).fetchall()
+    return {"status":"available" if rows else "no_data",
+            "items":[{"date":r["trade_date"].isoformat(),"fields":r["payload"]} for r in rows],
+            "note":"Published participant OI snapshots are displayed as archived. Source-specific field mapping is required before interpreting exposure."}
 
 
 @app.get("/api/v1/models")
