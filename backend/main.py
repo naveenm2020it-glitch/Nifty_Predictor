@@ -579,43 +579,70 @@ def export_latest_excel():
       headers={"Content-Disposition":'attachment; filename="NIFTY_IQ_Next_Day_Research.xlsx"'})
 
 
+
+def _simple_pdf(lines):
+    wrapped=[]
+    for line in lines:
+        text=str(line)
+        while len(text)>92:
+            wrapped.append(text[:92]); text=text[92:]
+        wrapped.append(text)
+    wrapped=wrapped[:48]
+    commands=["BT","/F1 10 Tf","50 790 Td"]
+    for index,line in enumerate(wrapped):
+        safe=line.encode("latin-1",errors="replace").decode("latin-1")
+        safe=safe.replace("\\","\\\\").replace("(","\\(").replace(")","\\)")
+        if index:commands.append("0 -15 Td")
+        commands.append("("+safe+") Tj")
+    commands.append("ET")
+    stream=("\n".join(commands)).encode("latin-1")
+    objects=[
+      b"<< /Type /Catalog /Pages 2 0 R >>",
+      b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+      b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+      b"<< /Length "+str(len(stream)).encode()+b" >>\nstream\n"+stream+b"\nendstream",
+    ]
+    pdf=bytearray(b"%PDF-1.4\n")
+    offsets=[0]
+    for i,obj in enumerate(objects,1):
+        offsets.append(len(pdf))
+        pdf.extend(str(i).encode()+b" 0 obj\n"+obj+b"\nendobj\n")
+    xref=len(pdf)
+    pdf.extend(b"xref\n0 "+str(len(offsets)).encode()+b"\n0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode())
+    pdf.extend(b"trailer\n<< /Size "+str(len(offsets)).encode()+b" /Root 1 0 R >>\nstartxref\n"+str(xref).encode()+b"\n%%EOF")
+    return bytes(pdf)
+
+
 @app.get("/api/v1/reports/latest.pdf")
 def export_latest_pdf():
-    from io import BytesIO
-    from reportlab.lib import colors
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    report=_latest_report_payload(); s=report["scenarios"]; metrics=report.get("validation_metrics") or {}
-    out=BytesIO(); doc=SimpleDocTemplate(out,pagesize=A4,rightMargin=18*mm,leftMargin=18*mm,topMargin=16*mm,bottomMargin=16*mm)
-    styles=getSampleStyleSheet(); styles.add(ParagraphStyle(name="SmallNote",parent=styles["BodyText"],fontSize=8,leading=11,textColor=colors.HexColor("#52616b")))
-    story=[Paragraph("NIFTY IQ — Next-session research report",styles["Title"]),
-      Paragraph("Research output only · No order execution",styles["SmallNote"]),Spacer(1,8)]
-    summary=[["Session date (weekday estimate)",report["session_date"].isoformat()],
-      ["Input cutoff",report["input_cutoff"].isoformat() if report["input_cutoff"] else "—"],
-      ["Generated",report["generated_at"].isoformat()],
-      ["Model",report.get("version") or "—"],["Model status",report.get("model_status") or "—"],
-      ["Research bias",s.get("bias","—")],["Model up score",str(s.get("probability_up","—"))],
-      ["Model down score",str(s.get("probability_down","—"))],["Reference close",str(s.get("reference_close","—"))],
-      ["ATR14",str(s.get("atr14","—"))]]
-    t=Table(summary,colWidths=[55*mm,115*mm]); t.setStyle(TableStyle([
-      ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#eaf0f6")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#cbd5e1")),
-      ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"TOP"),("PADDING",(0,0),(-1,-1),6)]))
-    story += [t,Spacer(1,12),Paragraph("Conditional scenarios",styles["Heading2"])]
-    scenario_rows=[["Path","Trigger reference","Target zone","Invalidation / boundary"],
-      ["Bullish",str(s.get("bullish",{}).get("trigger_reference","—")),str(s.get("bullish",{}).get("target_zone","—")),str(s.get("bullish",{}).get("invalidation","—"))],
-      ["Bearish",str(s.get("bearish",{}).get("trigger_reference","—")),str(s.get("bearish",{}).get("target_zone","—")),str(s.get("bearish",{}).get("invalidation","—"))],
-      ["Range", "—","—",str([s.get("range",{}).get("lower_reference"),s.get("range",{}).get("upper_reference")])]]
-    st=Table(scenario_rows,colWidths=[25*mm,38*mm,48*mm,59*mm]); st.setStyle(TableStyle([
-      ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#243b53")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
-      ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#cbd5e1")),("FONTSIZE",(0,0),(-1,-1),7),("PADDING",(0,0),(-1,-1),5)]))
-    story += [st,Spacer(1,12),Paragraph("Walk-forward evaluation",styles["Heading2"])]
+    report=_latest_report_payload(); scenarios=report["scenarios"]; metrics=report.get("validation_metrics") or {}
+    lines=["NIFTY IQ - NEXT SESSION RESEARCH REPORT","Research output only - no order execution","",
+      "Session date (weekday estimate): "+report["session_date"].isoformat(),
+      "Input cutoff: "+(report["input_cutoff"].isoformat() if report["input_cutoff"] else "-"),
+      "Generated: "+report["generated_at"].isoformat(),
+      "Model: "+str(report.get("version") or "-"),
+      "Model status: "+str(report.get("model_status") or "-"),
+      "Research bias: "+str(scenarios.get("bias","-")),
+      "Up model score: "+str(scenarios.get("probability_up","-")),
+      "Down model score: "+str(scenarios.get("probability_down","-")),
+      "Reference close: "+str(scenarios.get("reference_close","-")),
+      "ATR14: "+str(scenarios.get("atr14","-")),"","BULLISH PATH",
+      "Trigger reference: "+str(scenarios.get("bullish",{}).get("trigger_reference","-")),
+      "Target zone: "+str(scenarios.get("bullish",{}).get("target_zone","-")),
+      "Invalidation: "+str(scenarios.get("bullish",{}).get("invalidation","-")),"","BEARISH PATH",
+      "Trigger reference: "+str(scenarios.get("bearish",{}).get("trigger_reference","-")),
+      "Target zone: "+str(scenarios.get("bearish",{}).get("target_zone","-")),
+      "Invalidation: "+str(scenarios.get("bearish",{}).get("invalidation","-")),"","RANGE PATH",
+      "Lower reference: "+str(scenarios.get("range",{}).get("lower_reference","-")),
+      "Upper reference: "+str(scenarios.get("range",{}).get("upper_reference","-")),"","WALK-FORWARD METRICS"]
     for key in ("out_of_sample_samples","accuracy","balanced_accuracy","precision_up","recall_up","brier_score","majority_baseline_accuracy","beats_majority_baseline"):
-        if key in metrics: story.append(Paragraph(key.replace("_"," ").title()+": "+str(metrics[key]),styles["BodyText"]))
-    story += [Spacer(1,10),Paragraph(s.get("warning","Research only."),styles["SmallNote"])]
-    doc.build(story); out.seek(0)
-    return StreamingResponse(out,media_type="application/pdf",
+        if key in metrics:lines.append(key.replace("_"," ").title()+": "+str(metrics[key]))
+    lines += ["","IMPORTANT LIMITATION",str(scenarios.get("warning","Research only."))]
+    payload=io.BytesIO(_simple_pdf(lines))
+    return StreamingResponse(payload,media_type="application/pdf",
       headers={"Content-Disposition":'attachment; filename="NIFTY_IQ_Next_Day_Research.pdf"'})
 
 
