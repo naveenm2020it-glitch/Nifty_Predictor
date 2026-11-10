@@ -428,10 +428,10 @@ def run_evening_ingestion():
                 latest_model = conn.execute(
                     "SELECT training_completed_at FROM model_versions WHERE status='validated' ORDER BY created_at DESC LIMIT 1"
                 ).fetchone()
-            retrain_due = latest_model is None or (
-                latest_model["training_completed_at"] is not None and
-                (datetime.now(IST) - latest_model["training_completed_at"].replace(tzinfo=IST)).days >= 30
-            )
+            trained_at = latest_model["training_completed_at"] if latest_model else None
+            if trained_at is not None:
+                trained_at = trained_at.replace(tzinfo=IST) if trained_at.tzinfo is None else trained_at.astimezone(IST)
+            retrain_due = latest_model is None or trained_at is None or (datetime.now(IST) - trained_at).days >= 30
             if int(feature_count or 0) >= 301 and retrain_due:
                 try:
                     training_result = train_walk_forward_model()
