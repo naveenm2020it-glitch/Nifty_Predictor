@@ -18,6 +18,7 @@ import requests
 import xlrd
 
 from .db import connect
+from .storage import save_temporary_file
 
 log = logging.getLogger("nifty_iq.pipeline")
 IST = ZoneInfo("Asia/Kolkata")
@@ -356,6 +357,11 @@ def _clean_number(value):
 
 def _insert_source(dataset_key, source_key, source_name, source_url, file_name, report_date, raw, rows):
     digest = hashlib.sha256(raw).hexdigest()
+    try:
+        temporary_file = save_temporary_file(dataset_key, file_name, raw)
+    except Exception as exc:
+        # The database ingestion must continue even if the optional temporary file store is full.
+        temporary_file = {"status": "failed", "reason": type(exc).__name__}
     with connect() as conn:
         conn.execute("""
           INSERT INTO source_downloads(source_key,dataset_key,source_name,source_url,file_name,report_date,
@@ -369,7 +375,7 @@ def _insert_source(dataset_key, source_key, source_name, source_url, file_name, 
             (dataset_key, digest)
         ).fetchone()
         if existing:
-            return {"source": source_key, "status": "already_archived", "rows": existing["accepted_rows"], "sha256": digest}
+            return {"source": source_key, "status": "already_archived", "rows": existing["accepted_rows"], "sha256": digest, "temporary_file": temporary_file}
         imported = conn.execute("""
           INSERT INTO dataset_imports(dataset_key,source_name,source_url,file_name,sha256,first_date,last_date,
             row_count,accepted_rows,rejected_rows,status,notes)
@@ -398,8 +404,9 @@ def _insert_source(dataset_key, source_key, source_name, source_url, file_name, 
           VALUES (%s,%s,%s)
         """, ("official_source_download", "Official source file downloaded and archived",
               json.dumps({"source_key": source_key, "dataset_key": dataset_key, "report_date": report_date.isoformat(),
-                          "file_name": file_name, "sha256": digest, "rows": len(rows), "url": source_url})))
-    return {"source": source_key, "status": "downloaded", "rows": len(rows), "sha256": digest}
+                          "file_name": file_name, "sha256": digest, "rows": len(rows), "url": source_url,
+                          "temporary_file": temporary_file})))
+    return {"source": source_key, "status": "downloaded", "rows": len(rows), "sha256": digest, "temporary_file": temporary_file}
 
 
 def _store_feature_rows():
