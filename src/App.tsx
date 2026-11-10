@@ -55,10 +55,20 @@ function PredictionDashboard(){
  const refresh=async()=>{
   setLoading(true);setError("");
   try{
-   const [p,s]=await Promise.all([fetch(API+"/api/v1/predictions/latest"),fetch(API+"/api/v1/research/summary")]);
-   const pj=await p.json(),sj=await s.json();
+   const [p,s,selectedResponse]=await Promise.all([fetch(API+"/api/v1/predictions/latest"),fetch(API+"/api/v1/research/summary"),fetch(API+"/api/v1/analysis/latest")]);
+   const pj=await p.json(),sj=await s.json(),selected=await selectedResponse.json();
    if(!p.ok||!s.ok)throw new Error("Research API is not ready.");
-   setItem(pj.item||null);setSummary(sj);
+   const chosen=selected?.item?.report;
+   if(chosen?.agents){
+    const price=chosen.agents.price_structure?.evidence||{};
+    setItem({input_cutoff:chosen.trade_date,session_date:chosen.next_session,generated_at:selected.item.created_at,
+      reference_close:chosen.spot_close,data_quality:chosen.data_quality,
+      scenarios:{bias:chosen.coordinator?.bias,agents:chosen.agents,warning:chosen.warning,
+       option_trade_plan:chosen.coordinator?.option_trade_plan,
+       spot_trade_plan:{bullish_trigger:price.high,bullish_invalidation:price.low,bearish_trigger:price.low,bearish_invalidation:price.high,note:"Prior-session high/low are reference levels only. Wait for next-session confirmation."},
+       bullish:{trigger_reference:price.high,invalidation:price.low},bearish:{trigger_reference:price.low,invalidation:price.high},range:{}}});
+   }else{setItem(pj.item||null);}
+   setSummary(sj);
   }catch(e){setError(e instanceof Error?e.message:"Could not load the daily research report.");}
   finally{setLoading(false);}
  };
