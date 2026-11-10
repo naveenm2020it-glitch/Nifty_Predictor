@@ -93,3 +93,7 @@ uvicorn backend.main:app --reload
 ```
 
 Research software only. NIFTY 50 scope. No broker integration, order execution, or fabricated market data.
+
+
+### NSE holiday-aware session dates
+The daily report now chooses the next configured NSE trading session rather than the next weekday. The 2026 NSE equity holiday calendar and the 8-Nov-2026 Muhurat special session are in `backend/market_calendar.py`. Update this file when NSE publishes the next annual holiday circular; future-year dates are not assumed to be known automatically.
