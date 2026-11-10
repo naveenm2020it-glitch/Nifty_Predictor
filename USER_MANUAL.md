@@ -12,7 +12,7 @@ Last reviewed: 10 November 2026
 
 The website and API are deployed. The current working scope includes the research workspace, browser-local file vault, protected cloud archive, official-source daily ingestion, and a new one-click five-year historical download job. The historical downloader has been added to the codebase and requires a configured database/token plus a successful live test before its completeness can be confirmed.
 
-**This is not yet a completed next-day prediction product.** No approved model is trained or registered, and the API deliberately reports prediction status as blocked until source semantics and walk-forward validation are completed. The prediction, options, participant, futures, pattern, scenario and model-performance screens currently contain placeholders; do not use them as live trading signals.
+**This is not yet a completed next-day prediction product.** The walk-forward training and next-session research baseline are implemented. A model is not available until you import real data, build features and run training; it is registered as validated only if it passes out-of-sample sample-count, fold-count, balanced-accuracy, Brier-score and majority-baseline gates. The prediction and model-performance screens read from the API. Options, participant, futures and pattern screens still require further semantic mapping and dedicated models; do not treat them as live trading signals.
 
 No broker connection, order placement or trade execution is included.
 
@@ -138,9 +138,32 @@ Only after NIFTY 50 daily OHLC records have been synced to the cloud:
 3. Review the response. The current backfill creates technical feature snapshots from valid NIFTY 50 OHLC rows when at least 60 valid dates are available.
 4. Click **Refresh cloud status**.
 
-This is a technical-feature backfill, **not AI model training**. It does not generate a next-day forecast, model accuracy or trade recommendation. The current incremental feature set includes daily return, gap, range, close location, simple ATR and moving averages.
+This is a technical-feature backfill, **not AI model training**. It creates daily return, gap, range, close location, simple ATR and moving-average features. Training is a separate step.
 
-## 9. Verify the scheduled NSE ingestion
+## 9. Train and evaluate the daily direction research model
+
+After the five-year NIFTY OHLC history is downloaded and the historical technical features are built:
+
+1. Keep INGEST_API_TOKEN entered in the Data Centre.
+2. Click **Train walk-forward model**.
+3. Wait for the response. The API requires at least 300 valid next-session samples and at least three chronological test windows.
+4. The model is marked **validated** only when it has at least 100 out-of-sample predictions, at least three folds, balanced accuracy of at least 0.52, Brier score below 0.26 and performance above the majority-class baseline.
+5. Open **Model performance** to inspect fold-level results and aggregate out-of-sample metrics.
+6. If the model is rejected or blocked, do not force a forecast. Check data coverage, source mapping and sample count before trying again.
+
+This first model predicts whether the next available daily NIFTY close is higher or lower than the current close. Its logistic-regression scores are model estimates, not calibrated option probabilities, guaranteed win rates or intraday signals. The model does not select CE/PE strikes or predict 15-minute premium moves.
+
+## 10. Generate and use the next-session research report
+
+1. From **NSE data centre**, click **Generate next-day research** after a model has passed validation.
+2. Open **Next-day prediction** to see the latest saved forecast.
+3. Review the bias, up/down model scores, reference close, ATR-based conditional zones, triggers and invalidation references.
+4. Download the **PDF report** or **Excel report** from the prediction screen.
+5. On each scheduled evening ingestion, the API updates the latest features and attempts to generate a new scenario using the previously validated model. It does not retrain the model every evening.
+
+The displayed next-session date is a weekday estimate; public holidays may shift the actual NSE session. Confirm the exchange calendar before using the report. The conditional price zones are research references, not executable entries or assured targets.
+
+## 11. Verify the scheduled NSE ingestion
 
 1. Open https://github.com/naveenm2020it-glitch/Nifty_Predictor/actions
 2. Select **NIFTY IQ evening data ingestion**.
@@ -155,7 +178,7 @@ This is a technical-feature backfill, **not AI model training**. It does not gen
 
 The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange publication timing, source availability, rate limits and hosting availability can cause partial or failed runs. A scheduled run is not proof that every source was downloaded. Inspect each source status and date.
 
-## 10. Understand the current data limitations
+## 12. Understand the current data limitations
 
 - NIFTY Indices historical OHLC does not provide NIFTY index traded volume; do not fill it with invented values.
 - FII derivatives statistics are aggregate index-segment context, not direct NIFTY-underlying-only positioning.
@@ -163,7 +186,7 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 - Missing, stale, duplicate or conflicting data must be resolved before research or model training.
 - A successful API health check proves the API can reach its database; it does not prove market data is complete.
 
-## 11. Troubleshooting
+## 13. Troubleshooting
 
 | Problem | What to do |
 |---|---|
@@ -177,7 +200,7 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 | Evening workflow fails | Check the GitHub Actions secret and that it matches Render's scheduler token; inspect the job logs. |
 | No prediction appears | Expected at this stage: no validated model is currently available. Do not treat placeholders as signals. |
 
-## 12. What must happen before the product can be called a completed prediction system
+## 14. Remaining work before the full multi-engine product is complete
 
 The following work remains required:
 
