@@ -13,6 +13,8 @@
 
 ## Five required datasets
 
+Official source catalogue: [NSE Indices historical index data](https://www.niftyindices.com/reports/historical-data) exposes index OHLC in CSV format. [NSE Equity reports](https://www.nseindia.com/all-reports) and [NSE Derivatives reports](https://www.nseindia.com/all-reports-derivatives) list daily bhavcopy, participant OI, FII derivatives statistics, settlement and volatility reports. These sources are catalogued by the API; automatic download adapters are not yet enabled.
+
 1. NIFTY 50 daily OHLC history
 2. F&O bhavcopy
 3. Participant-wise open interest
