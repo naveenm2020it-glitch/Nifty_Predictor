@@ -809,3 +809,61 @@ def train_walk_forward_model():
           ("model_walk_forward_training","Chronological next-session direction model evaluated and stored",
            json.dumps({"model_id":model_row["id"],"version":version,"status":status,"metrics":metrics})))
     return {"status":status,"model_id":model_row["id"],"version":version,"training_samples":n,"metrics":metrics,"schema":schema}
+
+
+def generate_next_session_prediction():
+    """Generate an evidence-labelled next-session scenario from the latest validated model."""
+    import pickle
+    import numpy as np
+    with connect() as conn:
+        model_row=conn.execute("""SELECT m.id,m.version,m.validation_metrics,a.artifact_bytes
+          FROM model_versions m JOIN model_artifacts a ON a.model_version_id=m.id
+          WHERE m.status='validated' AND a.artifact_name='direction-model.pkl'
+          ORDER BY m.created_at DESC LIMIT 1""").fetchone()
+        latest=conn.execute("""SELECT trade_date,features FROM daily_feature_snapshots
+          WHERE feature_schema_version=%s ORDER BY trade_date DESC LIMIT 1""",(FEATURE_SCHEMA,)).fetchone()
+    if not model_row:
+        return {"status":"blocked_no_validated_model","note":"Run historical features and walk-forward training first."}
+    if not latest:
+        return {"status":"blocked_no_features"}
+    vector=_model_feature_vector(latest["features"])
+    if vector is None:
+        return {"status":"blocked_invalid_features"}
+    model=pickle.loads(bytes(model_row["artifact_bytes"]))
+    p_up=float(model.predict_proba(np.asarray([vector],dtype=float))[0][1])
+    p_down=1.0-p_up
+    close=float(latest["features"]["close"])
+    atr=float(latest["features"].get("atr14_simple") or 0)
+    if atr<=0:
+        return {"status":"blocked_invalid_atr"}
+    bias="bullish" if p_up>=0.55 else "bearish" if p_up<=0.45 else "range_or_uncertain"
+    next_day=latest["trade_date"]+timedelta(days=1)
+    while next_day.weekday()>=5:
+        next_day+=timedelta(days=1)
+    scenarios={
+      "bias":bias,"probability_up":round(p_up,4),"probability_down":round(p_down,4),
+      "reference_close":close,"atr14":atr,
+      "bullish":{"condition":"Price holds above reference close and confirms upside continuation.",
+        "trigger_reference":round(close+.25*atr,2),"target_zone":[round(close+.5*atr,2),round(close+atr,2)],
+        "invalidation":round(close-.35*atr,2)},
+      "bearish":{"condition":"Price sustains below reference close and confirms downside continuation.",
+        "trigger_reference":round(close-.25*atr,2),"target_zone":[round(close-atr,2),round(close-.5*atr,2)],
+        "invalidation":round(close+.35*atr,2)},
+      "range":{"condition":"No directional confirmation; avoid forcing a trade.",
+        "lower_reference":round(close-.35*atr,2),"upper_reference":round(close+.35*atr,2)},
+      "latest_input_date":latest["trade_date"].isoformat(),
+      "warning":"Daily index-close direction research only. Not an options entry, intraday signal, guaranteed target or investment advice. Next session date is a weekday estimate and may shift for NSE holidays."}
+    with connect() as conn:
+        saved=conn.execute("""INSERT INTO predictions(session_date,model_version_id,input_cutoff,data_quality,scenarios,status)
+          VALUES (%s,%s,%s,%s,%s,'published')
+          ON CONFLICT(session_date,model_version_id) DO UPDATE SET generated_at=NOW(),
+          input_cutoff=EXCLUDED.input_cutoff,data_quality=EXCLUDED.data_quality,
+          scenarios=EXCLUDED.scenarios,status='published' RETURNING id""",
+          (next_day,model_row["id"],latest["trade_date"],
+           json.dumps({"feature_schema":FEATURE_SCHEMA,"source_date":latest["trade_date"].isoformat(),
+             "walk_forward_metrics":model_row["validation_metrics"]}),json.dumps(scenarios))).fetchone()
+        conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
+          ("next_session_prediction","Next-session research scenario generated from validated direction model",
+           json.dumps({"prediction_id":saved["id"],"model_version":model_row["version"],"session_date":next_day.isoformat()})))
+    return {"status":"published","prediction_id":saved["id"],"session_date":next_day.isoformat(),
+      "model_version":model_row["version"],"scenarios":scenarios}
