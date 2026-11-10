@@ -45,7 +45,7 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
   const response=await fetch(apiBase+"/api/v1/analysis/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade_date:tradeDate,expiry:selectedExpiry||undefined})});
   const result=await response.json();
   if(!response.ok)throw new Error(result.detail||"Analysis failed.");
-  if(result.status==="expiry_selection_required"){setExpiries(result.expiries||[]);setExpiry("");setStatus(result.message||"Choose an expiry and click Load & Analyse again.");return false;}
+  if(result.status==="expiry_selection_required"){const choices=result.expiries||[];setExpiries(choices);const chosen=choices.includes(expiry)?expiry:(choices[0]||"");setExpiry(chosen);if(chosen){setStatus("Expiry detected. Running analysis for "+chosen+"…");return runAnalysis(chosen);}setStatus(result.message||"No verified expiry was returned.");return false;}
   setReport(result);setStatus("Analysis complete. Agent results have been saved and are available in their research tabs.");return true;
  };
  const loadAndAnalyse=async()=>{
@@ -53,7 +53,7 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
   setBusy(true);setError("");
   try{
    if(expiry&&expiries.includes(expiry)){setStatus("Running independent research agents for the selected expiry…");await runAnalysis(expiry);return;}
-   setReport(null);setExpiry("");setExpiries([]);setSourceOutcomes([]);
+   setReport(null);setExpiries([]);setSourceOutcomes([]);
    setStatus("Checking and downloading official NSE files for the selected date…");
    const start=await fetch(apiBase+"/api/v1/analysis/prepare",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade_date:tradeDate})});
    const started=await start.json();if(!start.ok)throw new Error(started.detail||"Could not start NSE data download.");
@@ -68,10 +68,11 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
    }
    if(!prepared)throw new Error("NSE download is taking longer than expected. Please retry shortly.");
    const choices=prepared.expiries||[];setExpiries(choices);setSourceOutcomes(prepared.sources||[]);
-   if(!choices.length)throw new Error("No NIFTY expiry contracts were found in the downloaded bhavcopy. Check the source status below and try another trading date.");
-   if(choices.length>1){setExpiry("");setStatus("Data preparation finished. Multiple expiries found — choose one, then click Load & Analyse again.");return;}
-   setExpiry(choices[0]);setStatus("One expiry detected automatically. Running all research agents…");
-   await runAnalysis(choices[0]);
+   if(!choices.length)throw new Error("No verified NIFTY expiry contracts were found for this market date. Check the F&O source status; no expiry will be invented.");
+   if(expiry&&!choices.includes(expiry))throw new Error("The manually selected expiry "+expiry+" is not present in the verified NIFTY contracts for "+tradeDate+". Choose one of the detected expiries.");
+   const chosen=expiry||choices[0];setExpiry(chosen);
+   setStatus((choices.length>1?"Multiple expiries found. Defaulting to the nearest expiry; you can change it from the expiry selector. ":"Expiry detected automatically. ")+"Running all research agents for "+chosen+"…");
+   await runAnalysis(chosen);
   }catch(e){setError(e instanceof Error?e.message:"Selected-date analysis failed.");}
   finally{setBusy(false);}
  };
@@ -79,9 +80,12 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
   <div className="selected-analysis-head"><div><b>Selected-date NIFTY analysis</b><small>Select a market date. The system downloads the required NSE reports, detects expiry and runs the complete analysis.</small></div><span className="selected-analysis-tag">ONE-CLICK RESEARCH</span></div>
   <div className="selected-analysis-controls">
    <label>Market date<input type="date" list="nifty-market-dates" value={tradeDate} onChange={e=>{setTradeDate(e.target.value);setExpiry("");setExpiries([]);setSourceOutcomes([]);setReport(null);setError("");setStatus("Date changed. Click Load & Analyse to fetch its data.");}}/><datalist id="nifty-market-dates">{availableDates.map(x=><option key={x} value={x}/>)}</datalist></label>
-   <label>Available NIFTY expiry<select value={expiry} onChange={e=>setExpiry(e.target.value)} disabled={!expiries.length||busy}><option value="">{expiries.length>1?"Select expiry":"Auto-detected after loading"}</option>{expiries.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
-   <button className="primary selected-load-button" disabled={!tradeDate||busy} onClick={()=>void loadAndAnalyse()}>{busy?"Loading data & analysing…":expiry?"Analyse selected expiry":"Load & Analyse"}</button>
+   <label>Expiry date (auto-filled; editable)<input type="date" value={expiry} onChange={e=>{setExpiry(e.target.value);setReport(null);setError("");}}/></label>
+   <button className="primary selected-load-button" disabled={!tradeDate||busy} onClick={()=>void loadAndAnalyse()}>{busy?"Loading data & analysing…":report||expiry&&expiries.includes(expiry)?"Analyse selected expiry":"Load & Analyse"}</button>
   </div>
+  {expiries.length>0&&<div className="selected-analysis-controls">
+   <label>Detected expiries — choose manually<select value={expiry} onChange={e=>{setExpiry(e.target.value);setReport(null);setError("");}} disabled={busy}><option value="">Select an expiry</option>{expiries.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
+  </div>}
   <div className="selected-analysis-status">{status}</div>
   {error&&<div className="vault-error">{error}</div>}
   {sourceOutcomes.length>0&&<details className="selected-source-details"><summary>Files checked for this date ({sourceOutcomes.length})</summary><pre>{JSON.stringify(sourceOutcomes,null,2)}</pre></details>}
