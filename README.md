@@ -104,3 +104,7 @@ The daily report now chooses the next configured NSE trading session rather than
 - `POST /api/v1/analysis/prepare` accepts `{"trade_date":"YYYY-MM-DD"}`, checks the selected NSE session, downloads missing official NIFTY 50 / India VIX / F&O bhavcopy / participant / FII reports, archives source files and returns expiries detected from NIFTY contracts.
 - `POST /api/v1/analysis/run` accepts trade date, selected expiry and ITM/OTM strike counts. It builds independent price, options, participant, volatility/futures and candle agents, then combines only available agent evidence. Reports are persisted by trade date + expiry in PostgreSQL.
 - Option chain values are historical bhavcopy closing values. The system deliberately skips executable CE/PE entry prices when no live option feed is available.
+
+
+### One-click selected-date analysis
+The NSE Data Centre has a single **Load & Analyse** action. It prepares the selected session's official-source datasets, detects the NIFTY expiries present in the bhavcopy, auto-selects a sole expiry, and asks for manual selection only when multiple expiries are present. It returns the complete selected-expiry chain (no ITM/OTM window filter), runs independent agents, saves the combined report and exposes agent-specific results in the prediction, options, participant, futures/volatility and pattern tabs.
