@@ -58,6 +58,19 @@ def _parse_double_json(response):
     return value if isinstance(value, list) else []
 
 
+def _warm_niftyindices(session):
+    """Prime the Nifty Indices cookie jar before calling its ASP.NET data endpoint."""
+    page = NIFTY_INDICES + "/reports/historical-data"
+    try:
+        session.get(page, timeout=(5, 8), headers={
+            "User-Agent": UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+    except requests.RequestException as exc:
+        log.warning("Nifty Indices page warm-up failed: %s", exc)
+
+
 def _nifty_index_rows(session, endpoint, start, end, index_name):
     url = NIFTY_INDICES + "/Backpage.aspx/" + endpoint
     body = {
@@ -67,24 +80,50 @@ def _nifty_index_rows(session, endpoint, start, end, index_name):
     headers = {
         "Content-Type": "application/json; charset=UTF-8",
         "X-Requested-With": "XMLHttpRequest",
+        "Origin": NIFTY_INDICES,
         "Referer": NIFTY_INDICES + "/reports/historical-data",
         "User-Agent": UA,
+        "Accept": "application/json, text/javascript, */*; q=0.01",
     }
-    response = session.post(url, json=body, headers=headers, timeout=(10, 60))
-    response.raise_for_status()
-    return _parse_double_json(response)
+    last_error = None
+    for attempt in range(2):
+        try:
+            if attempt:
+                _warm_niftyindices(session)
+                time.sleep(1.5)
+            response = session.post(url, data=json.dumps(body), headers=headers, timeout=(10, 60))
+            if response.status_code == 403:
+                last_error = RuntimeError(
+                    "NSE Indices blocked this cloud request (HTTP 403). "
+                    "The downloader refreshed the public-page session and retried. "
+                    "This is source-side anti-bot/IP protection, not a missing-data result."
+                )
+                continue
+            response.raise_for_status()
+            return _parse_double_json(response)
+        except requests.RequestException as exc:
+            last_error = exc
+    raise RuntimeError(
+        "Nifty Indices historical endpoint unavailable after session warm-up/retry: "
+        + str(last_error)
+    )
 
 
 def _vix_rows(session, start, end):
+    _warm_niftyindices(session)
     url = NIFTY_INDICES + "/Backpage.aspx/BindHistoricalIndiaVixData"
     body = "{'name':'India VIX','startDate':'" + _date_text(start) + "','endDate':'" + _date_text(end) + "'}"
     headers = {
         "Content-Type": "application/json; charset=UTF-8",
         "X-Requested-With": "XMLHttpRequest",
+        "Origin": NIFTY_INDICES,
         "Referer": NIFTY_INDICES + "/reports/historical-data",
         "User-Agent": UA,
+        "Accept": "application/json, text/javascript, */*; q=0.01",
     }
     response = session.post(url, data=body.encode("utf-8"), headers=headers, timeout=(10, 60))
+    if response.status_code == 403:
+        raise RuntimeError("Nifty Indices blocked the India VIX request from this cloud IP (HTTP 403).")
     response.raise_for_status()
     return _parse_double_json(response)
 
