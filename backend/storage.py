@@ -34,7 +34,7 @@ def save_temporary_file(dataset_key: str, filename: str, payload: bytes) -> dict
     digest = hashlib.sha256(payload).hexdigest()
     original_name = _safe_name(filename)
     suffix = Path(original_name).suffix.lower()
-    if suffix not in {".csv", ".xlsx", ".xls"}:
+    if suffix not in {".csv", ".xlsx", ".xls", ".zip"}:
         suffix = ".csv"
     folder = _root() / dataset_key
     folder.mkdir(parents=True, exist_ok=True)
