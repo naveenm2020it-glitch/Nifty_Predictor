@@ -734,6 +734,10 @@ def _model_feature_vector(features):
 
 def train_walk_forward_model():
     """Train a next-session direction research baseline with chronological evaluation."""
+    validation = validate_cloud_datasets()
+    if not validation.get("spot_ohlc", {}).get("passed"):
+        return {"status":"blocked_semantic_validation","validation":validation,
+                "note":"NIFTY OHLC must pass five-year date-span, row-integrity and conflict checks before model training."}
     import pickle
     import numpy as np
     from sklearn.linear_model import LogisticRegression
