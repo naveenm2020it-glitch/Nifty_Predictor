@@ -1090,7 +1090,8 @@ def generate_daily_evidence_report():
         longv=_clean_number(_get(p,["Future Index Long","FutureIndexLong"]))
         shortv=_clean_number(_get(p,["Future Index Short","FutureIndexShort"]))
         if longv is not None and shortv is not None: participant_map[label]={"long":longv,"short":shortv,"net":longv-shortv}
-    participant={"status":"analysed" if participant_map else "missing_or_unmapped","evidence":participant_map,
+    participant={"status":"analysed" if participant_map else "missing_or_unmapped","evidence":{"participant_positions":participant_map,
+      "fii_derivatives_rows":len(fii),"fii_scope":"Aggregate index-segment context, not NIFTY-only."},
       "bias":"bullish" if any("FII" in k and v["net"]>0 for k,v in participant_map.items()) else "bearish" if any("FII" in k and v["net"]<0 for k,v in participant_map.items()) else "neutral"}
 
     vix_close=None
@@ -1103,16 +1104,14 @@ def generate_daily_evidence_report():
     futures_agent={"status":"analysed" if vix_close is not None or fut_close is not None else "missing_or_unmapped",
       "evidence":{"india_vix_close":vix_close,"nifty_future_close":fut_close,
       "futures_basis_points":round(fut_close-close,2) if fut_close is not None else None},"bias":"neutral"}
-    fii_agent={"status":"context_available" if fii else "missing","bias":"neutral",
-      "evidence":{"rows":len(fii),"scope":"Aggregate index-segment FII context, not NIFTY-only."}}
     recent=[(candles[i]["close"]/candles[i-1]["close"]-1)*100 for i in range(max(1,len(candles)-20),len(candles))]
     pattern={"status":"analysed" if len(candles)>=5 else "limited_sample",
       "bias":"bullish" if sum(recent[-5:])>0 else "bearish" if sum(recent[-5:])<0 else "neutral",
       "evidence":{"sessions_available":len(candles),"positive_days_last_20":sum(x>0 for x in recent),
       "negative_days_last_20":sum(x<0 for x in recent),"last_5_return_sum_pct":round(sum(recent[-5:]),3)}}
 
-    agents={"price_structure":price,"options_derivatives":options,"participant_positioning":participant,
-      "fii_context":fii_agent,"futures_volatility":futures_agent,"recent_pattern":pattern}
+    agents={"price_structure":price,"options_derivatives":options,"participant_and_fii":participant,
+      "futures_volatility":futures_agent,"recent_pattern":pattern}
     votes=[price_score]
     if options["status"]=="analysed": votes.append(1 if options["bias"]=="bullish" else -1 if options["bias"]=="bearish" else 0)
     if participant["status"]=="analysed": votes.append(1 if participant["bias"]=="bullish" else -1 if participant["bias"]=="bearish" else 0)
