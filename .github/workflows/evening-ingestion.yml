@@ -19,7 +19,7 @@ jobs:
       - name: Validate scheduler configuration
         env:
           API_URL: https://nifty-predictor-api-0gl1.onrender.com
-          SCHEDULER_TOKEN: \${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
+          SCHEDULER_TOKEN: ${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
         run: |
           if [ -z "$SCHEDULER_TOKEN" ]; then
             echo "::error::Add NIFTY_IQ_SCHEDULER_TOKEN in GitHub Actions secrets and the same SCHEDULER_TOKEN in Render."
@@ -30,7 +30,7 @@ jobs:
       - name: Run protected official-source ingestion
         env:
           API_URL: https://nifty-predictor-api-0gl1.onrender.com
-          SCHEDULER_TOKEN: \${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
+          SCHEDULER_TOKEN: ${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
         run: |
           curl --fail-with-body --silent --show-error \
             --retry 5 --retry-all-errors --retry-delay 60 --max-time 900 \
