@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .db import connect, init_db
-from .pipeline import backfill_historical_features, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, train_walk_forward_model
+from .pipeline import backfill_historical_features, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, train_walk_forward_model, validate_cloud_datasets
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -374,6 +374,20 @@ def pipeline_readiness():
         "prediction_pipeline": "blocked_until_validation_passes",
         "note": "A file archive is not proof of exchange authenticity or correct field mapping. No model is trained by this endpoint."
     }
+
+
+
+@app.post("/api/v1/pipeline/validate")
+def validate_pipeline(ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")):
+    expected = os.getenv("INGEST_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Validation is disabled until INGEST_API_TOKEN is configured.")
+    if not ingest_token or not hmac.compare_digest(ingest_token, expected):
+        raise HTTPException(status_code=401, detail="Ingest token is missing or invalid.")
+    try:
+        return validate_cloud_datasets()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Cloud validation failed: " + str(exc)[:300])
 
 
 @app.post("/api/v1/models/train")
