@@ -7,7 +7,7 @@
 - Persistence: portable PostgreSQL through `DATABASE_URL`. Do not use Render Free Postgres for important long-term history: Render documents a 30-day expiry for free databases. Connect a non-expiring database plan/provider and retain independent exports/backups.
 - Browser vault: IndexedDB holds imported source files locally. Nothing is sent to the cloud until the user enters the configured import token and presses **Sync local files to cloud**.
 - Cloud archive: immutable file-import metadata plus row-level deduplication by dataset, trading date and row hash. Re-uploading the same file is idempotent.
-- Model registry: database schema is prepared for versioned model metadata, binary artifacts, feature schema, validation metrics and training cutoff.
+- Feature store: date-keyed daily feature snapshots are versioned by feature schema and source fingerprint, so later daily runs can update only the newest session.\n- Model registry: database schema is prepared for versioned model metadata, binary artifacts, feature schema, validation metrics and training cutoff.
 - Prediction registry: schema is prepared for daily scenarios and later outcome evaluation.
 - Audit: import and pipeline activity is recorded.
 
