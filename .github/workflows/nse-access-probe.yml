@@ -20,7 +20,7 @@ jobs:
           python - <<'PY'
           import requests
           from datetime import date
-          day = date.today().strftime("%Y%m%d")
+          day = "20261109"  # reproduce the selected market date that failed in Render
           url = f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{day}_F_0000.csv.zip"
           s = requests.Session()
           s.headers.update({
