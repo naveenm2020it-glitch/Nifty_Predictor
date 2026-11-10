@@ -37,7 +37,7 @@ function ScenarioPlanner(){
  const [item,setItem]=useState<any>(null);
  const [loading,setLoading]=useState(true);
  const [error,setError]=useState("");
- const refresh=async()=>{setLoading(true);setError("");try{const response=await fetch(API+"/api/v1/predictions/latest");const result=await response.json();if(!response.ok)throw new Error(result.detail||"Scenario research unavailable");setItem(result.item||null);}catch(e){setError(e instanceof Error?e.message:"Could not load saved scenarios.");}finally{setLoading(false);}};
+ const refresh=async()=>{setLoading(true);setError("");try{const [response,selectedResponse]=await Promise.all([fetch(API+"/api/v1/predictions/latest"),fetch(API+"/api/v1/analysis/latest")]);const result=await response.json(),selected=await selectedResponse.json();if(!response.ok)throw new Error(result.detail||"Scenario research unavailable");const report=selected?.item?.report;if(report?.agents){const price=report.agents.price_structure?.evidence||{};setItem({input_cutoff:report.trade_date,session_date:report.next_session,scenarios:{bias:report.coordinator?.bias,warning:report.warning,bullish:{trigger_reference:price.high,invalidation:price.low,target_zone:[]},range:{lower_reference:price.low,upper_reference:price.high},bearish:{trigger_reference:price.low,invalidation:price.high,target_zone:[]}}});}else setItem(result.item||null);}catch(e){setError(e instanceof Error?e.message:"Could not load saved scenarios.");}finally{setLoading(false);}};
  useEffect(()=>{void refresh();},[]);
  if(loading)return <Empty text="Loading saved next-session scenarios…"/>;
  if(error)return <Empty text={error}/>;
