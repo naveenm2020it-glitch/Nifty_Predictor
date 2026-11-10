@@ -202,11 +202,11 @@ def _insert_source(dataset_key, source_key, source_name, source_url, file_name, 
     with connect() as conn:
         conn.execute("""
           INSERT INTO source_downloads(source_key,dataset_key,source_name,source_url,file_name,report_date,
-            fetched_at,sha256,byte_count,raw_bytes,status,parsed_rows)
-          VALUES (%s,%s,%s,%s,%s,%s,NOW(),%s,%s,%s,'downloaded',%s)
+            fetched_at,sha256,byte_count,status,parsed_rows)
+          VALUES (%s,%s,%s,%s,%s,%s,NOW(),%s,%s,'downloaded',%s)
           ON CONFLICT(source_key,report_date,sha256) DO NOTHING
         """, (source_key, dataset_key, source_name, source_url, file_name, report_date,
-              digest, len(raw), raw, len(rows)))
+              digest, len(raw), len(rows)))
         existing = conn.execute(
             "SELECT id,accepted_rows FROM dataset_imports WHERE dataset_key=%s AND sha256=%s",
             (dataset_key, digest)
