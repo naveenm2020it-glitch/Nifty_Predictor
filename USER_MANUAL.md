@@ -147,7 +147,7 @@ After the five-year NIFTY OHLC history is downloaded and the historical technica
 
 1. Keep INGEST_API_TOKEN entered in the Data Centre.
 2. Click **Train walk-forward model**.
-3. Wait for the response. The API requires at least 300 valid next-session samples and at least three chronological test windows.
+3. Wait for the response. The cloud validator requires at least 1,000 distinct NIFTY trading dates across at least 4.8 years, with valid and non-conflicting OHLC rows. The model trainer then requires at least 300 valid next-session samples and at least three chronological test windows.
 4. The model is marked **validated** only when it has at least 100 out-of-sample predictions, at least three folds, balanced accuracy of at least 0.52, Brier score below 0.26 and performance above the majority-class baseline.
 5. Open **Model performance** to inspect fold-level results and aggregate out-of-sample metrics.
 6. If the model is rejected or blocked, do not force a forecast. Check data coverage, source mapping and sample count before trying again.
