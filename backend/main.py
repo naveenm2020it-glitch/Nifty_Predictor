@@ -491,9 +491,15 @@ def research_participants():
           WHERE dataset_key='participant_oi'
           ORDER BY trade_date DESC,id DESC LIMIT 30
         """).fetchall()
-    return {"status":"available" if rows else "no_data",
+        fii_rows = conn.execute("""
+          SELECT trade_date,payload FROM dataset_records
+          WHERE dataset_key='fii_derivatives'
+          ORDER BY trade_date DESC,id DESC LIMIT 20
+        """).fetchall()
+    return {"status":"available" if rows or fii_rows else "no_data",
             "items":[{"date":r["trade_date"].isoformat(),"fields":r["payload"]} for r in rows],
-            "note":"Published participant OI snapshots are displayed as archived. Source-specific field mapping is required before interpreting exposure."}
+            "fii_items":[{"date":r["trade_date"].isoformat(),"fields":r["payload"]} for r in fii_rows],
+            "note":"Published participant OI and FII index-derivatives reports are shown as archived source rows. FII reports are aggregate index-segment context, not NIFTY-underlying-only positions. Map fields before interpreting exposure."}
 
 
 @app.get("/api/v1/models")
