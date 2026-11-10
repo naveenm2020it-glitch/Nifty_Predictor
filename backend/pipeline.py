@@ -403,6 +403,70 @@ def run_evening_ingestion():
         raise
 
 
+
+def backfill_historical_features():
+    """One-time chronological feature build from already archived NIFTY OHLC rows."""
+    with connect() as conn:
+        records = conn.execute("""
+          SELECT trade_date,payload,record_hash FROM dataset_records
+          WHERE dataset_key='spot_ohlc' ORDER BY trade_date ASC
+        """).fetchall()
+    parsed = []
+    for record in records:
+        p = record["payload"]
+        values = {
+            "open": _clean_number(_get(p, ["OPEN", "Open", "open"])),
+            "high": _clean_number(_get(p, ["HIGH", "High", "high"])),
+            "low": _clean_number(_get(p, ["LOW", "Low", "low"])),
+            "close": _clean_number(_get(p, ["CLOSE", "Close", "close"])),
+        }
+        if any(v is None or v <= 0 for v in values.values()):
+            continue
+        if values["high"] < max(values["open"], values["close"], values["low"]) or values["low"] > min(values["open"], values["close"], values["high"]):
+            continue
+        parsed.append({"date": record["trade_date"], "hash": record["record_hash"], **values})
+    if len(parsed) < 60:
+        return {"status": "blocked_insufficient_history", "valid_spot_rows": len(parsed), "required_minimum": 60}
+    feature_rows = []
+    for i in range(1, len(parsed)):
+        window = parsed[max(0, i - 49):i + 1]
+        current = parsed[i]
+        previous = parsed[i - 1]
+        closes = [x["close"] for x in window]
+        ranges = [x["high"] - x["low"] for x in window[-14:]]
+        features = {
+            "open": current["open"], "high": current["high"], "low": current["low"], "close": current["close"],
+            "return_1d_pct": (current["close"] / previous["close"] - 1) * 100,
+            "gap_pct": (current["open"] / previous["close"] - 1) * 100,
+            "range_pct": (current["high"] - current["low"]) / previous["close"] * 100,
+            "close_location": (current["close"] - current["low"]) / max(current["high"] - current["low"], 1e-9),
+            "atr14_simple": sum(ranges) / len(ranges),
+            "sma_5": sum(closes[-5:]) / len(closes[-5:]),
+            "sma_10": sum(closes[-10:]) / len(closes[-10:]),
+            "sma_20": sum(closes[-20:]) / len(closes[-20:]),
+            "sma_50": sum(closes[-50:]) / len(closes[-50:]),
+            "available_history_rows": len(window),
+            "feature_readiness": "technical_features_only_not_a_prediction",
+        }
+        fingerprint = hashlib.sha256((current["hash"] + previous["hash"]).encode()).hexdigest()
+        feature_rows.append((current["date"], FEATURE_SCHEMA, current["date"], fingerprint, json.dumps(features)))
+    with connect() as conn:
+        conn.executemany("""
+          INSERT INTO daily_feature_snapshots(trade_date,feature_schema_version,input_cutoff,source_fingerprint,features)
+          VALUES (%s,%s,%s,%s,%s)
+          ON CONFLICT(trade_date,feature_schema_version) DO UPDATE
+          SET input_cutoff=EXCLUDED.input_cutoff,source_fingerprint=EXCLUDED.source_fingerprint,
+              features=EXCLUDED.features,created_at=NOW()
+        """, feature_rows)
+        conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
+            ("historical_feature_backfill", "Chronological technical feature snapshots generated from archived NIFTY OHLC",
+             json.dumps({"rows": len(feature_rows), "feature_schema": FEATURE_SCHEMA,
+                         "first_date": feature_rows[0][0].isoformat(), "last_date": feature_rows[-1][0].isoformat()})))
+    return {"status": "completed", "feature_rows": len(feature_rows), "feature_schema": FEATURE_SCHEMA,
+            "first_date": feature_rows[0][0].isoformat(), "last_date": feature_rows[-1][0].isoformat(),
+            "note": "Feature generation only; no model training or prediction was performed."}
+
+
 def pipeline_runs(limit=30):
     with connect() as conn:
         rows = conn.execute("""
