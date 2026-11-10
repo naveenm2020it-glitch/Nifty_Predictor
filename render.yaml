@@ -1,10 +1,3 @@
-databases:
-  - name: nifty-predictor-db
-    databaseName: nifty_predictor_db
-    user: nifty_predictor_db_user
-    plan: free
-    region: singapore
-
 services:
   - type: web
     name: nifty-predictor-api
@@ -17,6 +10,8 @@ services:
     healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: nifty-predictor-db
-          property: connectionString
+        sync: false
+      - key: INGEST_API_TOKEN
+        sync: false
+      - key: SCHEDULER_TOKEN
+        sync: false
