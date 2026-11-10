@@ -7,7 +7,7 @@ import os
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -247,6 +247,38 @@ def run_evening_job(scheduler_token: Optional[str] = Header(None, alias="X-Sched
         return run_evening_ingestion()
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Evening ingestion failed: " + str(exc)[:300])
+
+
+@app.post("/api/v1/pipeline/history/download/public")
+def start_public_history_download(request: Request):
+    # This endpoint is intentionally usable from the published NIFTY IQ UI
+    # without exposing an administrative ingest token in the browser.
+    origin = request.headers.get("origin", "")
+    allowed_origin = os.getenv("PUBLIC_APP_ORIGIN", "https://nifty-next-day-prediction.onrender.com").rstrip("/")
+    if origin and origin.rstrip("/") != allowed_origin:
+        raise HTTPException(status_code=403, detail="Start historical downloads from the official NIFTY IQ webpage.")
+    try:
+        with connect() as conn:
+            latest = conn.execute(
+                "SELECT id,status,started_at,details FROM historical_download_jobs ORDER BY started_at DESC LIMIT 1"
+            ).fetchone()
+        if latest and latest["status"] in ("queued", "running"):
+            return {"job_id": latest["id"], "status": "already_running",
+                    "message": "A historical download is already running. Progress is shown below."}
+        if latest and latest["status"] == "completed":
+            return {"job_id": latest["id"], "status": "already_completed",
+                    "message": "The five-year download has already completed. Review historical coverage before starting another run."}
+        if latest and latest["status"] == "completed_with_gaps":
+            started = latest["started_at"]
+            from datetime import timedelta, timezone
+            if started and (datetime.now(timezone.utc) - started).total_seconds() < 1800:
+                return {"job_id": latest["id"], "status": "retry_cooldown",
+                        "message": "A download with missing source reports finished recently. Wait 30 minutes before retrying unavailable dates."}
+        return start_five_year_historical_download()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Automatic historical download could not start: " + str(exc)[:220])
 
 
 @app.post("/api/v1/pipeline/history/download")
