@@ -668,11 +668,37 @@ def _run_five_year_history(job_id, start_date, end_date):
             _history_job_update(job_id, status="running", processed_dates=index, downloaded_files=downloaded,
                 missing_files=missing, details={"phase":"downloading_daily_derivatives","current_date":trade_date.isoformat(),
                 "trading_dates":len(trade_dates),"recent_missing":outcomes[-20:]})
+        # Automatically continue from ingestion into validation, feature creation and
+        # a chronological research baseline. Each phase is independently recorded;
+        # a failed model gate never fabricates or publishes a forecast.
+        research = {"feature_backfill": None, "semantic_validation": None,
+                    "walk_forward_training": None, "forecast": None}
+        try:
+            _history_job_update(job_id, details={"phase":"building_historical_features",
+                "trading_dates":len(trade_dates),"recent_missing":outcomes[-20:]})
+            research["feature_backfill"] = backfill_historical_features()
+            _history_job_update(job_id, details={"phase":"validating_historical_data",
+                "trading_dates":len(trade_dates),"recent_missing":outcomes[-20:]})
+            research["semantic_validation"] = validate_cloud_datasets()
+            if research["semantic_validation"].get("spot_ohlc", {}).get("passed"):
+                _history_job_update(job_id, details={"phase":"walk_forward_model_training",
+                    "trading_dates":len(trade_dates),"recent_missing":outcomes[-20:]})
+                research["walk_forward_training"] = train_walk_forward_model()
+                if research["walk_forward_training"].get("status") == "validated":
+                    research["forecast"] = generate_next_session_prediction()
+            else:
+                research["walk_forward_training"] = {
+                    "status":"blocked_semantic_validation",
+                    "note":"Historical NIFTY OHLC did not pass the five-year integrity gate."
+                }
+        except Exception as research_exc:
+            log.exception("Post-ingestion research pipeline failed")
+            research["pipeline_error"] = str(research_exc)[:500]
         status = "completed" if missing == 0 else "completed_with_gaps"
         _history_job_update(job_id, status=status, processed_dates=len(trade_dates), downloaded_files=downloaded,
             missing_files=missing, details={"phase":"finished","trading_dates":len(trade_dates),
             "first_trade_date":trade_dates[0].isoformat(),"last_trade_date":trade_dates[-1].isoformat(),
-            "recent_missing":outcomes[-100:]}, finished_at=datetime.now(IST))
+            "recent_missing":outcomes[-100:],"research":research}, finished_at=datetime.now(IST))
         with connect() as conn:
             conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
                 ("five_year_historical_download","Five-year historical source download finished",
