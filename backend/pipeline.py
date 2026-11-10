@@ -109,7 +109,7 @@ def _valid_file(response):
     return "html" not in ctype and not head.startswith(b"<!doctype html") and not head.startswith(b"<html")
 
 
-def _download_nse(session, day, report_name, direct_paths=()):
+def _download_nse(session, day, report_name, direct_paths=(), timeout=(10, 45)):
     errors = []
     urls = [_report_url(report_name, day)]
     urls.extend("https://nsearchives.nseindia.com/" + p.lstrip("/") for p in direct_paths)
@@ -621,7 +621,7 @@ def _run_five_year_history(job_id, start_date, end_date):
                 if _source_exists(source_key, trade_date):
                     continue
                 try:
-                    raw, source_url = _download_nse(nse, trade_date, report_name, paths)
+                    raw, source_url = _download_nse(nse, trade_date, report_name, paths, timeout=(5, 12))
                     if kind == "zip":
                         rows = _csv_rows(raw, zipped=True)
                         rows = [r for r in rows if str(_get(r, ["TckrSymb","Symbol","Ticker","Undrlyg"] ) or "").upper() == "NIFTY"]
