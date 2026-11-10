@@ -23,6 +23,8 @@ Official source catalogue: [NSE Indices historical index data](https://www.nifty
 4. FII derivatives statistics
 5. India VIX and settlement / volatility data
 
+Scope note: the NIFTY 50 historical OHLC endpoint provides Open, High, Low and Close; it does not provide index traded volume. Volume is therefore optional and is never synthesized. NSE FII derivatives statistics are aggregate index-derivatives context, not NIFTY-underlying-specific positions; they must not be represented as direct NIFTY-only positioning.
+
 ## Incremental operating model
 
 1. One-time historical backfill: import and validate the five-year history; deduplicate; normalize source-specific fields; create features; run chronological walk-forward validation; train and register model versions.
