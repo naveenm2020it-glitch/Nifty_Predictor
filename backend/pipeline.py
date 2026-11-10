@@ -145,20 +145,32 @@ def _csv_rows(raw, zipped=False):
 
 
 def _participant_rows(raw):
+    """Parse participant OI CSV after variable-length NSE report preamble."""
     text = raw.decode("utf-8-sig", errors="replace")
     lines = [line for line in text.splitlines() if line.strip()]
-    header_index = next((i for i, line in enumerate(lines[:20])
-                         if "client type" in line.lower()
-                         and any(token in line.lower() for token in (
-                             "future index long", "future index short",
-                             "option index call long", "option index put long",
-                             "future stock long", "future stock short"
-                         ))), None)
+    header_index = None
+    required_header_tokens = {
+        "futureindexlong", "futureindexshort", "optionindexcalllong",
+        "optionindexputlong", "futurestocklong", "futurestockshort",
+    }
+    for index, line in enumerate(lines[:40]):
+        try:
+            columns = next(csv.reader([line]))
+        except (csv.Error, StopIteration):
+            continue
+        normalized = {
+            "".join(ch.lower() for ch in str(column) if ch.isalnum())
+            for column in columns
+        }
+        if "clienttype" in normalized and normalized.intersection(required_header_tokens):
+            header_index = index
+            break
     if header_index is None:
-        header_index = 1 if len(lines) > 1 else 0
+        raise ValueError("Participant OI report header not found: expected Client Type and participant position columns.")
     reader = csv.DictReader(io.StringIO("\n".join(lines[header_index:])))
     return [{str(k).strip(): (v.strip() if isinstance(v, str) else v)
-             for k, v in row.items() if k is not None} for row in reader]
+             for k, v in row.items() if k is not None}
+            for row in reader if any(v not in (None, "") for v in row.values())]
 
 
 def _xls_rows(raw):
