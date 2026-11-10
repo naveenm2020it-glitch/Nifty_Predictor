@@ -684,7 +684,8 @@ def _run_five_year_history(job_id, start_date, end_date):
             finished_at=datetime.now(IST))
 
 def start_five_year_historical_download():
-    if not _history_lock.acquire(blocking=False):
+    acquired = _history_lock.acquire(blocking=False)
+    if not acquired:
         return {"status":"already_running","message":"A historical download is already running."}
     try:
         end_date = datetime.now(IST).date()
@@ -692,7 +693,6 @@ def start_five_year_historical_download():
         with connect() as conn:
             active = conn.execute("SELECT id,status FROM historical_download_jobs WHERE status IN ('queued','running') ORDER BY started_at DESC LIMIT 1").fetchone()
             if active:
-                _history_lock.release()
                 return {"job_id":active["id"],"status":"already_running"}
             job = conn.execute("""
               INSERT INTO historical_download_jobs(status,start_date,end_date,details)
@@ -703,8 +703,7 @@ def start_five_year_historical_download():
         return {"job_id":job["id"],"status":"started","start_date":start_date.isoformat(),"end_date":end_date.isoformat(),
                 "message":"Five-year historical download started. Keep this service available while it runs; progress is saved in the database."}
     finally:
-        if _history_lock.locked():
-            _history_lock.release()
+        _history_lock.release()
 
 def historical_download_status():
     with connect() as conn:
