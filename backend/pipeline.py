@@ -477,7 +477,13 @@ def run_evening_ingestion():
         nifty_session.headers.update({"User-Agent": UA, "Content-Type": "application/json; charset=UTF-8",
             "X-Requested-With": "XMLHttpRequest", "Referer": NIFTY_INDICES + "/reports/historical-data"})
         today = datetime.now(IST).date()
-        start = today - timedelta(days=8)
+        # Bootstrap only enough recent candles for rolling technical context;
+        # after 50 sessions are archived, fetch just the recent overlap window.
+        with connect() as conn:
+            archived_sessions = conn.execute(
+                "SELECT COUNT(DISTINCT trade_date) AS n FROM dataset_records WHERE dataset_key='spot_ohlc'"
+            ).fetchone()["n"]
+        start = today - timedelta(days=120 if int(archived_sessions or 0) < 50 else 8)
         spot_rows = _nifty_index_rows(nifty_session, "getHistoricaldatatabletoString", start, today, "NIFTY 50")
         if not spot_rows:
             raise RuntimeError("NIFTY Indices returned no NIFTY 50 OHLC rows for the recent date window.")
