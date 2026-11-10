@@ -710,3 +710,102 @@ def historical_download_status():
     with connect() as conn:
         row = conn.execute("SELECT * FROM historical_download_jobs ORDER BY started_at DESC LIMIT 1").fetchone()
     return {"job":dict(row) if row else None}
+
+
+MODEL_FEATURES = ["return_1d_pct","gap_pct","range_pct","close_location","atr14_pct","close_vs_sma5_pct","close_vs_sma10_pct","close_vs_sma20_pct","close_vs_sma50_pct","sma5_vs_sma20_pct","sma20_vs_sma50_pct"]
+
+def _model_feature_vector(features):
+    close = _clean_number(features.get("close"))
+    if not close or close <= 0:
+        return None
+    def val(key):
+        value = _clean_number(features.get(key))
+        return value if value is not None else 0.0
+    return [
+        val("return_1d_pct"), val("gap_pct"), val("range_pct"), val("close_location"),
+        val("atr14_simple") / close * 100.0,
+        (close / val("sma_5") - 1) * 100 if val("sma_5") else 0.0,
+        (close / val("sma_10") - 1) * 100 if val("sma_10") else 0.0,
+        (close / val("sma_20") - 1) * 100 if val("sma_20") else 0.0,
+        (close / val("sma_50") - 1) * 100 if val("sma_50") else 0.0,
+        (val("sma_5") / val("sma_20") - 1) * 100 if val("sma_20") else 0.0,
+        (val("sma_20") / val("sma_50") - 1) * 100 if val("sma_50") else 0.0,
+    ]
+
+def train_walk_forward_model():
+    """Train a next-session direction research baseline with chronological evaluation."""
+    import pickle
+    import numpy as np
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import accuracy_score, balanced_accuracy_score, brier_score_loss, precision_score, recall_score
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    with connect() as conn:
+        rows = conn.execute("SELECT trade_date,features FROM daily_feature_snapshots WHERE feature_schema_version=%s ORDER BY trade_date ASC", (FEATURE_SCHEMA,)).fetchall()
+    samples = []
+    for i in range(len(rows)-1):
+        current, following = rows[i]["features"], rows[i+1]["features"]
+        vector = _model_feature_vector(current)
+        close, next_close = _clean_number(current.get("close")), _clean_number(following.get("close"))
+        if vector is None or not close or not next_close or close == next_close:
+            continue
+        samples.append({"date": rows[i]["trade_date"], "x": vector, "y": int(next_close > close)})
+    n = len(samples)
+    if n < 300:
+        return {"status":"blocked_insufficient_samples","samples":n,"required":300,
+                "note":"At least 300 valid next-session labels are required."}
+    X = np.asarray([s["x"] for s in samples], dtype=float)
+    y = np.asarray([s["y"] for s in samples], dtype=int)
+    initial = max(200, int(n * 0.60))
+    remaining = n - initial
+    folds = min(5, remaining // 25)
+    if folds < 3:
+        return {"status":"blocked_insufficient_walk_forward_windows","samples":n}
+    fold_size = remaining // folds
+    probs, truths, baselines, fold_metrics = [], [], [], []
+    for fold in range(folds):
+        train_end = initial + fold * fold_size
+        test_end = n if fold == folds-1 else min(n, train_end+fold_size)
+        if test_end <= train_end:
+            continue
+        model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1500,class_weight="balanced",random_state=42))
+        model.fit(X[:train_end],y[:train_end])
+        probability = model.predict_proba(X[train_end:test_end])[:,1]
+        pred = (probability >= .5).astype(int)
+        truth = y[train_end:test_end]
+        probs.extend(probability.tolist()); truths.extend(truth.tolist())
+        baselines.extend([int(np.mean(y[:train_end]) >= .5)] * len(truth))
+        fold_metrics.append({"fold":fold+1,"train_samples":train_end,"test_samples":len(truth),
+          "test_start":samples[train_end]["date"].isoformat(),"test_end":samples[test_end-1]["date"].isoformat(),
+          "accuracy":float(accuracy_score(truth,pred)),"balanced_accuracy":float(balanced_accuracy_score(truth,pred)),
+          "brier_score":float(brier_score_loss(truth,probability))})
+    p=np.asarray(probs); actual=np.asarray(truths); pred=(p>=.5).astype(int); base=np.asarray(baselines)
+    metrics={"out_of_sample_samples":int(len(actual)),"folds":fold_metrics,
+      "accuracy":float(accuracy_score(actual,pred)),"balanced_accuracy":float(balanced_accuracy_score(actual,pred)),
+      "precision_up":float(precision_score(actual,pred,zero_division=0)),
+      "recall_up":float(recall_score(actual,pred,zero_division=0)),
+      "brier_score":float(brier_score_loss(actual,p)),
+      "majority_baseline_accuracy":float(accuracy_score(actual,base)),
+      "beats_majority_baseline":bool(accuracy_score(actual,pred)>accuracy_score(actual,base)),
+      "method":"Expanding-window chronological evaluation; preprocessing fitted within each training window.",
+      "interpretation":"Research evaluation only; not proof of future profitability or calibrated trading odds."}
+    final_model=make_pipeline(StandardScaler(),LogisticRegression(max_iter=1500,class_weight="balanced",random_state=42))
+    final_model.fit(X,y)
+    artifact=pickle.dumps(final_model,protocol=pickle.HIGHEST_PROTOCOL)
+    version="nifty-direction-"+datetime.now(IST).strftime("%Y%m%d-%H%M%S")
+    schema={"feature_schema":FEATURE_SCHEMA,"features":MODEL_FEATURES,"target":"next_available_session_close_up",
+      "training_samples":n,"first_sample":samples[0]["date"].isoformat(),"last_sample":samples[-1]["date"].isoformat(),
+      "model_type":"StandardScaler + LogisticRegression",
+      "label_definition":"1 when next available NIFTY daily close is greater than current close; ties excluded."}
+    status="validated" if len(actual)>=100 and len(fold_metrics)>=3 else "evaluated"
+    with connect() as conn:
+        model_row=conn.execute("""INSERT INTO model_versions(model_name,version,training_started_at,training_completed_at,training_cutoff,feature_schema,validation_metrics,status)
+          VALUES (%s,%s,NOW(),NOW(),%s,%s,%s,%s) RETURNING id""",
+          ("NIFTY next-session direction baseline",version,samples[-1]["date"],json.dumps(schema),json.dumps(metrics),status)).fetchone()
+        conn.execute("""INSERT INTO model_artifacts(model_version_id,artifact_name,media_type,sha256,artifact_bytes)
+          VALUES (%s,%s,%s,%s,%s)""",
+          (model_row["id"],"direction-model.pkl","application/octet-stream",hashlib.sha256(artifact).hexdigest(),artifact))
+        conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
+          ("model_walk_forward_training","Chronological next-session direction model evaluated and stored",
+           json.dumps({"model_id":model_row["id"],"version":version,"status":status,"metrics":metrics})))
+    return {"status":status,"model_id":model_row["id"],"version":version,"training_samples":n,"metrics":metrics,"schema":schema}
