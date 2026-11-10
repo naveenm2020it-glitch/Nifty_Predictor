@@ -2,7 +2,7 @@ import io
 import unittest
 import zipfile
 
-from backend.pipeline import _clean_number, _csv_rows, _parse_date, _participant_rows, _wilson_interval
+from backend.pipeline import _clean_number, _csv_rows, _fit_logistic_model, _logistic_probability, _parse_date, _participant_rows, _wilson_interval
 
 
 class PipelineParserTests(unittest.TestCase):
@@ -37,6 +37,16 @@ class PipelineParserTests(unittest.TestCase):
 
     def test_wilson_interval_empty_sample_is_unknown(self):
         self.assertEqual(_wilson_interval(0, 0), [None, None])
+
+    def test_pure_python_logistic_model_returns_ordered_probabilities(self):
+        X = [[float(i), float(i % 7)] for i in range(80)]
+        y = [0 if i < 40 else 1 for i in range(80)]
+        model = _fit_logistic_model(X, y, iterations=100)
+        low = _logistic_probability(model, [5.0, 5.0])
+        high = _logistic_probability(model, [75.0, 5.0])
+        self.assertGreaterEqual(low, 0.0)
+        self.assertLessEqual(high, 1.0)
+        self.assertGreater(high, low)
 
     def test_zip_bhavcopy_csv_is_read(self):
         buffer = io.BytesIO()
