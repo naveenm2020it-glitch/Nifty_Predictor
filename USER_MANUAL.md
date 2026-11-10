@@ -77,7 +77,7 @@ Use this only if you already have additional CSV/Excel data that you want to com
 
 The local vault is tied to this browser profile and website origin. Clearing browser site data can erase it. Download backups of your original files regularly. Folder access may need to be granted again after a browser restart; Firefox may require you to select the folder again.
 
-## 5. Configure cloud storage and secure upload
+## 6. Configure cloud storage and secure upload
 
 Cloud upload is optional until you configure the API. Do not put secrets in source code, GitHub commits, screenshots or public messages.
 
@@ -111,7 +111,7 @@ Save both in your password manager. Do not reuse the same token for both setting
 
 The GitHub workflow uses this secret to call the protected API. Never add the token to the workflow file itself.
 
-## 6. Sync local files to cloud
+## 7. Sync local files to cloud
 
 1. Return to the website → **NSE data centre**.
 2. In **Cloud archive**, paste the `INGEST_API_TOKEN` into the **Cloud import token** field.
@@ -129,28 +129,7 @@ If upload returns:
 - **415** — use CSV for cloud import; local Excel import is converted by the browser.
 
 
-## 6. Download five years of historical data automatically
-
-The NSE Data Centre now has an **Automatic 5-year historical data download** panel. This downloads from configured public NSE/NSE Indices sources directly to the cloud database; you do not need to select a local folder for this path.
-
-1. Confirm the API health endpoint reports database `connected`.
-2. In the Render API service, confirm `INGEST_API_TOKEN` is set.
-3. Open the webpage → **NSE data centre**.
-4. Paste the Render `INGEST_API_TOKEN` into **Cloud import token**.
-5. Click **Download 5-Year Historical Data**.
-6. Keep the API service available while the background download runs. The progress panel refreshes automatically every five seconds.
-7. Monitor processed trading dates, downloaded file count and unavailable report count.
-8. When the job finishes, review the **Historical data coverage** panel. It compares each dataset's distinct dates with the imported NIFTY 50 trading-date calendar and shows covered dates, rows, date range and percentage. A percentage is only a date-coverage indicator; it does not prove every report has correct columns or complete contract-level rows.
-
-The downloader requests NIFTY 50 daily OHLC and India VIX history over the five-year date range. It then iterates actual NIFTY trading dates to request NIFTY-only F&O bhavcopy rows, participant-wise OI, FII derivatives statistics, daily settlement prices and daily volatility reports. Previously archived report files are skipped where their source/date is already present.
-
-**Important limitations:** NSE report archives may not expose every report for every historical date, and formats changed over time (including the F&O bhavcopy change in July 2024). Requests can be blocked or rate-limited. The job therefore reports missing reports and may finish with gaps; it must not be interpreted as a guaranteed complete five-year dataset. FII derivatives statistics are aggregate index-segment context. NIFTY index OHLC has no traded volume field. Large five-year F&O histories can consume substantial database storage; monitor the database quota before running and keep independent backups.
-
-API diagnostics:
-- `POST /api/v1/pipeline/history/download` — protected by `X-Ingest-Token`; starts the historical download.
-- `GET /api/v1/pipeline/history/status` — reports job progress and errors.
-
-## 7. Build historical technical features
+## 8. Build historical technical features
 
 Only after NIFTY 50 daily OHLC records have been synced to the cloud:
 
@@ -161,7 +140,7 @@ Only after NIFTY 50 daily OHLC records have been synced to the cloud:
 
 This is a technical-feature backfill, **not AI model training**. It does not generate a next-day forecast, model accuracy or trade recommendation. The current incremental feature set includes daily return, gap, range, close location, simple ATR and moving averages.
 
-## 8. Verify the scheduled NSE ingestion
+## 9. Verify the scheduled NSE ingestion
 
 1. Open https://github.com/naveenm2020it-glitch/Nifty_Predictor/actions
 2. Select **NIFTY IQ evening data ingestion**.
@@ -176,7 +155,7 @@ This is a technical-feature backfill, **not AI model training**. It does not gen
 
 The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange publication timing, source availability, rate limits and hosting availability can cause partial or failed runs. A scheduled run is not proof that every source was downloaded. Inspect each source status and date.
 
-## 9. Understand the current data limitations
+## 10. Understand the current data limitations
 
 - NIFTY Indices historical OHLC does not provide NIFTY index traded volume; do not fill it with invented values.
 - FII derivatives statistics are aggregate index-segment context, not direct NIFTY-underlying-only positioning.
@@ -184,7 +163,7 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 - Missing, stale, duplicate or conflicting data must be resolved before research or model training.
 - A successful API health check proves the API can reach its database; it does not prove market data is complete.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Problem | What to do |
 |---|---|
@@ -198,7 +177,7 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 | Evening workflow fails | Check the GitHub Actions secret and that it matches Render's scheduler token; inspect the job logs. |
 | No prediction appears | Expected at this stage: no validated model is currently available. Do not treat placeholders as signals. |
 
-## 11. What must happen before the product can be called a completed prediction system
+## 12. What must happen before the product can be called a completed prediction system
 
 The following work remains required:
 
