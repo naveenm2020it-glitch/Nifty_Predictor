@@ -10,7 +10,7 @@ Last reviewed: 10 November 2026
 
 ## 1. Important: what is ready today
 
-The website and API are deployed. The working code includes the research workspace, browser-local file vault, protected cloud archive, automatic five-year history job, semantic OHLC validation, technical features, CPU-light walk-forward direction baseline, next-session scenario, PDF/Excel export, historical option-chain summary, futures summary, participant/FII archive views and daily candle-pattern statistics. The downloader and every NSE parser still require successful live verification against the exchange's actual responses before data completeness can be claimed.
+The website and API are deployed. The working daily workflow is designed to fetch only the latest available NSE session reports, append them to cloud PostgreSQL, update rolling indicators and generate a next-session evidence report. It does not require a five-year historical download or a trained ML model. The five analysis agents cover price structure, options/derivatives, participant and FII positioning, futures/volatility, and recent patterns. Each agent reports unavailable or unmapped inputs explicitly. Automatic source fetching and every parser still require successful live verification against the exchange's actual responses before data completeness can be claimed.
 
 **This is not yet a completed next-day prediction product.** The walk-forward training and next-session research baseline are implemented. A model is not available until you import real data, build features and run training; it is registered as validated only if it passes out-of-sample sample-count, fold-count, balanced-accuracy, Brier-score and majority-baseline gates. The prediction and model-performance screens read from the API. Options, participant, futures and pattern screens currently provide historical descriptive analytics; their complete source mapping and dedicated predictive models remain unfinished. Do not treat them as live trading signals.
 
@@ -29,9 +29,9 @@ No broker connection, order placement or trade execution is included.
 4. Use the moon/sun control in the top bar to switch dark/light appearance.
 5. Use the sidebar collapse control to gain workspace width. On a narrow screen, use the menu button.
 
-## 3. Prepare the five datasets
+## 3. Daily source datasets
 
-Use genuine historical files from official or otherwise verifiable sources. Keep an untouched backup of every original file. The intended history window is approximately five years, with matching trading dates wherever the source provides them.
+The automatic workflow fetches the latest available trading-session documents from the configured public NSE/Nifty Indices sources. Keep the cloud PostgreSQL database persistent so each daily session is appended to the existing archive. Historical CSV/Excel imports remain optional for additional research.
 
 The Data Centre accepts CSV and Excel (.xlsx/.xls) files locally. The first worksheet of an Excel workbook is converted to CSV by the browser. The cloud API accepts CSV uploads only; the browser performs that conversion before upload.
 
@@ -52,7 +52,7 @@ For the folder import feature, use descriptive filenames so the app can classify
 
 If a filename is classified incorrectly, use the individual **Import CSV** button under the correct dataset instead.
 
-## 4. Download historical data automatically (recommended)
+## 4. Automatic daily data download and next-day analysis
 
 1. Open **NSE data centre**.
 2. Find **Automatic 5-year historical data download** at the top.
@@ -63,7 +63,7 @@ If a filename is classified incorrectly, use the individual **Import CSV** butto
 
 The web action is protected by a server-side single-job check and a retry cooldown. It can be started only from the published NIFTY IQ website. Cloud file uploads, feature backfill and other administrative actions still use the separate `INGEST_API_TOKEN`.
 
-The downloader requests NIFTY 50 OHLC and India VIX history in date chunks, then attempts the available NSE daily derivatives reports for each NIFTY trading date. NSE archive coverage, historical availability and rate limits are controlled by the source websites. A finished job with gaps is not complete coverage. The date-coverage percentage is a diagnostic, not proof of correct field mapping or full contract-level data.
+The daily downloader requests the latest available session only; it does not repeat a five-year download. NSE report publication timing, holidays, cloud IP restrictions and rate limits can cause partial runs. A scheduled run is not proof that every report was retrieved. Inspect each source's status and date. The system stores only source provenance and parsed records in the current database schema; it does not yet preserve every original binary report.
 
 ## 5. Optional: import your own local files
 
@@ -131,15 +131,15 @@ If upload returns:
 - **415** — use CSV for cloud import; local Excel import is converted by the browser.
 
 
-## 8. Automatic feature generation and validation
+## 8. Daily feature updates and five-agent analysis
 
-The five-year download job now automatically proceeds to historical feature generation and semantic validation when the archive download loop finishes. It then attempts chronological walk-forward training only if the NIFTY 50 OHLC integrity gate passes. A forecast is saved only if the model passes the out-of-sample acceptance checks. Review the **Post-download research pipeline** status shown beneath the download progress.
+After each daily source fetch, the backend updates rolling NIFTY features from the latest stored sessions and creates a daily evidence report. The report contains five agents: (1) price structure, (2) options and derivatives, (3) participant and FII positioning, (4) futures and volatility, and (5) recent price patterns. Agents with missing or unmapped inputs are marked unavailable. The coordinator publishes a bullish, bearish or wait/range scenario without inventing probabilities.
 
-If you imported additional local files after the automatic download, you can still click **Build historical features** and **Validate cloud datasets** manually. The feature builder creates daily return, gap, range, close location, simple ATR and moving-average features. A feature build by itself is not proof that a model is trained or validated.
+Rolling features include daily return, gap, range, close location, available ATR and moving averages. A feature build by itself is not proof of a validated predictive model.
 
-## 9. Train and evaluate the daily direction research model
+## 9. Optional historical ML model research
 
-After the five-year NIFTY OHLC history is downloaded and the historical technical features are built:
+Historical model training is optional and separate from the daily five-agent report. Use it only if you later import enough genuine chronological price history:
 
 1. Keep INGEST_API_TOKEN entered in the Data Centre.
 2. Click **Train walk-forward model**.
@@ -150,7 +150,7 @@ After the five-year NIFTY OHLC history is downloaded and the historical technica
 
 This first model predicts whether the next available daily NIFTY close is higher or lower than the current close. Its logistic-regression scores are model estimates, not calibrated option probabilities, guaranteed win rates or intraday signals. The model does not select CE/PE strikes or predict 15-minute premium moves.
 
-## 10. Generate and use the next-session research report
+## 10. Generate and use the next-session daily report
 
 1. From **NSE data centre**, click **Generate next-day research** after a model has passed validation.
 2. Open **Next-day prediction** to see the latest saved forecast.
@@ -158,7 +158,7 @@ This first model predicts whether the next available daily NIFTY close is higher
 4. Download the **PDF report** or **Excel report** from the prediction screen.
 5. On each scheduled evening ingestion, the API updates the latest feature snapshot and attempts to generate a scenario using the latest validated model. It only attempts a new walk-forward training run when at least 301 feature snapshots exist and the last validated model is at least 30 days old. New model versions must pass the same out-of-sample gates.
 
-The displayed next-session date is a weekday estimate; public holidays may shift the actual NSE session. Confirm the exchange calendar before using the report. The conditional price zones are research references, not executable entries or assured targets.
+The displayed next-session date is a weekday estimate; public holidays may shift the actual NSE session. Confirm the exchange calendar before using the report. The conditional price zones are research references, not executable entries or assured targets. Probabilities are intentionally blank unless a separately validated model is used.
 
 ## 11. Verify the scheduled NSE ingestion
 
