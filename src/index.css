@@ -369,3 +369,14 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 .selected-plan-warning{padding:9px 11px;border-left:3px solid var(--accent);background:var(--card);font-size:9px;line-height:1.5;color:var(--muted)}
 @media(max-width:980px){.selected-analysis-controls{grid-template-columns:repeat(3,minmax(0,1fr))}.selected-agent-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.selected-analysis-head,.selected-consensus{flex-direction:column}.selected-analysis-controls{grid-template-columns:1fr 1fr}.selected-analysis-controls button{width:100%}.selected-agent-grid{grid-template-columns:1fr}}
+
+/* Simplified one-action selected-date research flow */
+.selected-analysis-controls{grid-template-columns:minmax(180px,1fr) minmax(190px,1fr) auto;align-items:end;gap:12px}
+.selected-analysis-controls label{min-width:0}
+.selected-load-button{min-width:170px;white-space:nowrap}
+.selected-analysis-head{align-items:center}
+.selected-analysis-status{min-height:34px;display:flex;align-items:center}
+.research-evidence-json{max-height:360px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;color:var(--text);font-size:11px;line-height:1.65}
+.selected-chain .table-scroll{max-height:480px;overflow:auto}
+.selected-chain table{min-width:900px}
+@media(max-width:760px){.selected-analysis-controls{grid-template-columns:1fr}.selected-load-button{width:100%}}
