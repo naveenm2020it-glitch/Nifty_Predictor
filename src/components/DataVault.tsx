@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, CheckCircle2, Download, FileUp, HardDrive, RefreshCw, Trash2, UploadCloud, Play, ShieldCheck, AlertTriangle, FolderOpen } from "lucide-react";
-import * as XLSX from "xlsx";
+
 
 type DatasetKey = "spot_ohlc" | "fo_bhavcopy" | "participant_oi" | "fii_derivatives" | "vix_volatility";
 type StoredFile = { id:string; datasetKey:DatasetKey; fileName:string; blob:Blob; size:number; importedAt:string; rows:number; headers:string[]; firstDate:string|null; lastDate:string|null; missingCells:number; sha256:string };
