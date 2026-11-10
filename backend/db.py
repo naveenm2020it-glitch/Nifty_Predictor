@@ -154,5 +154,22 @@ def init_db():
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS ix_predictions_session ON predictions(session_date DESC);
+
+        CREATE TABLE IF NOT EXISTS historical_download_jobs (
+          id BIGSERIAL PRIMARY KEY,
+          status TEXT NOT NULL,
+          start_date DATE NOT NULL,
+          end_date DATE NOT NULL,
+          total_dates INTEGER NOT NULL DEFAULT 0,
+          processed_dates INTEGER NOT NULL DEFAULT 0,
+          downloaded_files INTEGER NOT NULL DEFAULT 0,
+          missing_files INTEGER NOT NULL DEFAULT 0,
+          details JSONB NOT NULL DEFAULT '{}'::jsonb,
+          error TEXT,
+          started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          finished_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS ix_historical_jobs_started ON historical_download_jobs(started_at DESC);
         CREATE INDEX IF NOT EXISTS ix_ingestion_runs_started ON ingestion_runs(started_at DESC);
         """)
