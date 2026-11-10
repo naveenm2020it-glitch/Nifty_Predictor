@@ -1,39 +1,92 @@
-name: NIFTY IQ evening data ingestion
+name: NIFTY IQ — NSE Auto Download
 
 on:
   schedule:
-    # 19:15 and 20:00 India time, Monday to Friday (UTC schedules).
+    # 19:15 and 20:00 IST, Monday to Friday (UTC).
     - cron: "45 13 * * 1-5"
     - cron: "30 14 * * 1-5"
   workflow_dispatch:
+    inputs:
+      run_type:
+        description: "Choose what to run now"
+        required: true
+        type: choice
+        default: full_ingestion
+        options:
+          - full_ingestion
+          - api_health_check
 
 concurrency:
   group: nifty-iq-evening-ingestion
   cancel-in-progress: false
 
 jobs:
-  ingest:
+  health:
+    name: Check NIFTY IQ API
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
+    outputs:
+      api_ok: ${{ steps.health.outputs.api_ok }}
     steps:
-      - name: Validate scheduler configuration
+      - name: Check backend health
+        id: health
         env:
           API_URL: https://nifty-predictor-api-0gl1.onrender.com
+        run: |
+          set -e
+          echo "Checking NIFTY IQ backend..."
+          BODY=$(curl --fail-with-body --silent --show-error --retry 3 --retry-delay 20 --max-time 60 "$API_URL/health")
+          echo "$BODY"
+          echo "api_ok=true" >> "$GITHUB_OUTPUT"
+
+  ingest:
+    name: Download available NSE reports and ingest data
+    if: github.event_name == 'schedule' || inputs.run_type == 'full_ingestion'
+    needs: health
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Validate scheduler secret
+        env:
           SCHEDULER_TOKEN: ${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
         run: |
           if [ -z "$SCHEDULER_TOKEN" ]; then
-            echo "::error::Add NIFTY_IQ_SCHEDULER_TOKEN in GitHub Actions secrets and the same SCHEDULER_TOKEN in Render."
+            echo "::error::Missing GitHub secret NIFTY_IQ_SCHEDULER_TOKEN. Add it under Settings > Secrets and variables > Actions. Its value must match Render SCHEDULER_TOKEN."
             exit 1
           fi
-          echo "Scheduler configuration found."
+          echo "Scheduler secret is present."
 
-      - name: Run protected official-source ingestion
+      - name: Run official-source ingestion
+        id: ingestion
         env:
           API_URL: https://nifty-predictor-api-0gl1.onrender.com
           SCHEDULER_TOKEN: ${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
         run: |
-          curl --fail-with-body --silent --show-error \
-            --retry 5 --retry-all-errors --retry-delay 60 --max-time 900 \
+          set -e
+          echo "Calling the protected ingestion endpoint."
+          echo "The pipeline will ingest the latest reports available from the configured official sources; on a market holiday this can be the previous trading session."
+          RESPONSE=$(curl --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --retry-delay 45 --max-time 1200 \
             -X POST "$API_URL/api/v1/jobs/evening" \
             -H "X-Scheduler-Token: $SCHEDULER_TOKEN" \
-            -H "Accept: application/json"
+            -H "Accept: application/json")
+          echo "$RESPONSE" | tee ingestion-response.json
+          echo "Ingestion endpoint returned successfully."
+
+      - name: Save ingestion response
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nifty-iq-ingestion-response-${{ github.run_id }}
+          path: ingestion-response.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  health-only:
+    name: Health check only (no NSE download)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_type == 'api_health_check'
+    needs: health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm backend is reachable
+        run: echo "NIFTY IQ API health check passed. No NSE download was started."
