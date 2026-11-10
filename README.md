@@ -48,8 +48,9 @@ Scope note: the NIFTY 50 historical OHLC endpoint provides Open, High, Low and C
 5. Set a strong `INGEST_API_TOKEN` in Render for manual file upload and historical feature backfill.
 6. Redeploy the API after setting the variables. In the app's NSE Data Centre, enter the ingest token and choose **Sync local files to cloud**. This is an explicit upload; the local browser vault remains intact.
 7. Run the **NIFTY IQ evening data ingestion** workflow manually once from GitHub Actions to verify the connection. It is also scheduled for 19:15 and 20:00 IST, Monday to Friday.
-8. After the five-year NIFTY OHLC history has been imported, call `POST /api/v1/pipeline/features/backfill` with the `X-Ingest-Token` header once. This creates historical technical feature snapshots; it does not train a model.
-9. Check `/api/v1/system/status`, `/api/v1/datasets`, `/api/v1/pipeline/readiness`, `/api/v1/pipeline/runs` and `/api/v1/pipeline/source-downloads`.
+8. In NSE Data Centre, paste `INGEST_API_TOKEN` into Cloud import token and click **Download 5-Year Historical Data**. Keep the API service available while the background job runs; progress is saved to PostgreSQL and can be resumed by starting another run (already-downloaded files are deduplicated). Review missing dates and source counts before proceeding.
+9. After the five-year NIFTY OHLC history has been downloaded, call `POST /api/v1/pipeline/features/backfill` with the `X-Ingest-Token` header once. This creates historical technical feature snapshots; it does not train a model.
+10. Check `/api/v1/system/status`, `/api/v1/datasets`, `/api/v1/pipeline/readiness`, `/api/v1/pipeline/runs`, `/api/v1/pipeline/history/status` and `/api/v1/pipeline/source-downloads`.
 
 The token is sent only as an HTTPS request header and is held in the current browser page state. Do not commit it to GitHub or put it in frontend build variables.
 
@@ -62,6 +63,8 @@ The token is sent only as an HTTPS request header and is held in the current bro
 - `POST /api/v1/datasets/import` — protected by `X-Ingest-Token`; CSV upload
 - `GET /api/v1/pipeline/readiness`
 - `POST /api/v1/jobs/evening` — protected by `X-Scheduler-Token`; downloads official daily source files
+- `POST /api/v1/pipeline/history/download` — protected by `X-Ingest-Token`; starts the five-year official-source historical downloader
+- `GET /api/v1/pipeline/history/status` — reports historical download progress and missing report counts
 - `POST /api/v1/pipeline/features/backfill` — protected by `X-Ingest-Token`; one-time historical feature generation
 - `GET /api/v1/pipeline/runs`
 - `GET /api/v1/pipeline/source-downloads`
