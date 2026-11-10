@@ -201,18 +201,26 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 | Evening workflow fails | Check the GitHub Actions secret and that it matches Render's scheduler token; inspect the job logs. |
 | No prediction appears | Expected at this stage: no validated model is currently available. Do not treat placeholders as signals. |
 
-## 14. Remaining work before the full multi-engine product is complete
+## 14. Current research modules and remaining work
 
-The first daily NIFTY direction research baseline, chronological walk-forward evaluation, forecast display and PDF/Excel report endpoints are implemented. They still require real historical data, configured secrets and successful deployment/runtime verification.
+The following historical research views are implemented and read from archived NSE records:
 
-The following larger product modules remain incomplete:
+- **Options intelligence:** latest NIFTY option chain from the archived F&O bhavcopy, nearest available expiry, OI-based max pain, put/call OI ratio, highest put-OI and call-OI strikes, and nearby CE/PE LTP/OI/change-OI/volume. IV and Greeks are not shown unless verified fields are available.
+- **Futures:** archived NIFTY futures contract rows with expiry, close, OI, change in OI, volume and settlement where present.
+- **FII & participant flow:** archived participant-wise OI rows and FII index-derivatives reports. FII values are aggregate index-segment context, not NIFTY-underlying-only positioning; raw fields are not yet a validated predictive feature set.
+- **Pattern intelligence:** transparent daily candle rules with next-available-session close outcomes. Win rates and Wilson intervals are withheld for fewer than 20 occurrences.
+- **Scenario planner:** displays the same validated daily next-session direction scenario as the prediction page.
 
-1. Verify the full five-year automatic NSE/NSE Indices download against real source responses and report exact missing dates.
-2. Complete source-specific semantic mapping and data-quality tests for F&O bhavcopy, participant OI, FII derivatives, settlement and volatility files.
-3. Build dedicated options analytics from validated contracts: expiry/strike chain, PCR, max pain, OI support/resistance and reliable IV/Greeks only when source fields support them.
-4. Build separate participant/FII positioning, futures basis and volatility-regime feature engines.
-5. Build historical pattern detection with touch counts, regime filters, confidence intervals and walk-forward tests.
-6. Add scenario-specific model evaluation and forecast outcome tracking across future sessions.
-7. Test the entire automated evening process end-to-end on actual exchange-published data, including retry, holiday handling, database persistence and exports.
+These are historical EOD research views, not live option-chain or intraday trading signals.
 
-The current direction model is a daily index-close research baseline only. It is not the requested full options/intraday prediction engine. Until live ingestion and all required module validations pass, use the application for research and data validation—not as a trading signal service.
+The following work still remains before the complete multi-engine product is ready:
+
+1. Run the five-year automatic downloader with configured secrets and verify actual NSE/NSE Indices responses, date coverage, and missing reports.
+2. Complete source-specific semantic mapping and data-quality tests for all F&O, participant OI, FII, settlement and volatility fields.
+3. Validate option contract identifiers, expiry/strike/lot-size rules and calculate IV/Greeks only when inputs are complete and independently checked.
+4. Build validated FII/participant positioning, futures basis and volatility-regime feature engines.
+5. Expand candle-pattern intelligence with trend/volatility/session filters, touch counts, regime segmentation and separate chronological validation.
+6. Track forecast outcomes against actual subsequent sessions and evaluate calibration, confidence intervals and stability over time.
+7. Test the entire evening cycle end-to-end on actual exchange-published data, including retry, holiday handling, database persistence, scheduled automation and exports.
+
+The currently implemented ML baseline predicts next available daily NIFTY close direction. It does not predict option-premium movement, 15-minute targets or CE/PE strike entries. Until live ingestion and the required validation gates pass, use the app for research and data validation—not as an execution or guaranteed-signal service.
