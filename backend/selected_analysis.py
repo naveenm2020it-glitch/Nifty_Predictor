@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import uuid
 from datetime import date, timedelta
 
 from .db import connect
@@ -134,6 +136,43 @@ def _download_selected(trade_date: date):
             log.warning("Selected-date source %s failed: %s",source_key,exc)
             outcomes.append({"source":source_key,"status":"missing","reason":str(exc)[:240]})
     return outcomes
+
+
+
+def _prepare_worker(job_id: str, trade_date: date):
+    with connect() as conn:
+        conn.execute("UPDATE selected_analysis_jobs SET status='running',updated_at=NOW() WHERE id=%s",(job_id,))
+    try:
+        sources=_download_selected(trade_date)
+        expiries=[x.isoformat() for x in expiries_for_date(trade_date)]
+        status="completed" if expiries else "completed_no_expiry"
+        result={"trade_date":trade_date.isoformat(),"expiries":expiries,"sources":sources,
+                "message":"Required date-specific NSE reports were checked/downloaded. Select a verified expiry." if expiries else "No mapped NIFTY option expiry was found in the selected-date bhavcopy."}
+        with connect() as conn:
+            conn.execute("UPDATE selected_analysis_jobs SET status=%s,result=%s,updated_at=NOW(),finished_at=NOW() WHERE id=%s",
+                         (status,json.dumps(result,default=str),job_id))
+    except Exception as exc:
+        with connect() as conn:
+            conn.execute("UPDATE selected_analysis_jobs SET status='failed',error=%s,updated_at=NOW(),finished_at=NOW() WHERE id=%s",
+                         (str(exc)[:500],job_id))
+
+
+def start_selected_date_prepare(trade_date: date):
+    job_id=str(uuid.uuid4())
+    with connect() as conn:
+        conn.execute("INSERT INTO selected_analysis_jobs(id,trade_date,status) VALUES (%s,%s,'queued')",(job_id,trade_date))
+    thread=threading.Thread(target=_prepare_worker,args=(job_id,trade_date),daemon=True)
+    thread.start()
+    return {"job_id":job_id,"status":"queued","trade_date":trade_date.isoformat(),
+            "message":"Backend download job started. You can continue using the website while NSE files are checked."}
+
+
+def selected_date_prepare_status(job_id: str):
+    with connect() as conn:
+        row=conn.execute("SELECT id,trade_date,status,result,error,created_at,updated_at,finished_at FROM selected_analysis_jobs WHERE id=%s",(job_id,)).fetchone()
+    if not row:
+        raise KeyError("Selected-date preparation job was not found.")
+    return dict(row)
 
 
 def _option_rows(trade_date: date, expiry: date):
