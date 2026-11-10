@@ -40,6 +40,7 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
  const [report,setReport]=useState<any>(null);
  const [sourceOutcomes,setSourceOutcomes]=useState<any[]>([]);
  useEffect(()=>{fetch(apiBase+"/api/v1/analysis/dates").then(r=>r.json()).then(x=>{const ds=x.dates||[];setAvailableDates(ds);if(ds.length)setTradeDate(ds[0]);}).catch(()=>setError("Could not load available NIFTY dates."));},[apiBase]);
+ useEffect(()=>{setExpiry("");setExpiries([]);setReport(null);setSourceOutcomes([]);setError("");setStatus("Date changed. Load the selected trading session to detect its expiry.");},[tradeDate]);
  const runAnalysis=async(selectedExpiry:string)=>{
   const response=await fetch(apiBase+"/api/v1/analysis/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade_date:tradeDate,expiry:selectedExpiry||undefined})});
   const result=await response.json();
