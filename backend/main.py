@@ -145,6 +145,8 @@ async def import_dataset(
         date_aliases = ["trade_date", "date", "timestamp", "trad_dt", "biz_dt", "date1"]
         accepted = []
         rejected = 0
+        filtered = 0
+        fo_symbol_filter_applied = False
         dates = []
         for row in reader:
             parsed = parse_trade_date(find_value(row, date_aliases))
@@ -152,6 +154,13 @@ async def import_dataset(
                 rejected += 1
                 continue
             clean = {str(k).strip(): (v.strip() if isinstance(v, str) else v) for k, v in row.items() if k is not None}
+            if dataset_key == "fo_bhavcopy":
+                symbol_value = find_value(clean, ["TckrSymb", "Symbol", "Ticker", "Underlying", "Undrlyg"])
+                if symbol_value is not None:
+                    fo_symbol_filter_applied = True
+                    if "NIFTY" not in str(symbol_value).upper():
+                        filtered += 1
+                        continue
             if dataset_key == "spot_ohlc":
                 aliases = {
                     "open": ["open", "open_price", "opn", "opn_pric"],
