@@ -1,8 +1,10 @@
 import io
 import unittest
 import zipfile
+from datetime import date
+from unittest.mock import Mock
 
-from backend.pipeline import _clean_number, _csv_rows, _fit_logistic_model, _logistic_probability, _parse_date, _participant_rows, _wilson_interval
+from backend.pipeline import _clean_number, _csv_rows, _fit_logistic_model, _logistic_probability, _nse_index_archive_rows, _parse_date, _participant_rows, _wilson_interval
 
 
 class PipelineParserTests(unittest.TestCase):
@@ -47,6 +49,24 @@ class PipelineParserTests(unittest.TestCase):
         self.assertGreaterEqual(low, 0.0)
         self.assertLessEqual(high, 1.0)
         self.assertGreater(high, low)
+
+
+    def test_official_nse_daily_index_archive_maps_nifty_ohlc(self):
+        response = Mock()
+        response.status_code = 200
+        response.headers = {"Content-Type": "text/csv"}
+        response.content = (
+            b"Index Name,Index Date,Open,High,Low,Closing,Volume,Turnover\\n"
+            b"Nifty 50,09-Nov-2026,25000,25100,24900,25050,12345,1000\\n"
+            b"Nifty Bank,09-Nov-2026,50000,50200,49900,50100,23456,2000\\n"
+        )
+        session = Mock()
+        session.get.return_value = response
+        rows = _nse_index_archive_rows(session, date(2026, 11, 9), date(2026, 11, 9), "NIFTY 50")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["CLOSE"], "25050.0")
+        self.assertEqual(rows[0]["HistoricalDate"], "09 Nov 2026")
+        self.assertIn("ind_close_all_09112026.csv", rows[0]["_source_url"])
 
     def test_zip_bhavcopy_csv_is_read(self):
         buffer = io.BytesIO()
