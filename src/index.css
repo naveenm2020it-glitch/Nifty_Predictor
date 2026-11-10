@@ -345,3 +345,5 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 .vault-temp-status b{font:800 10px Manrope;color:var(--text)}
 .vault-temp-status small{font-size:8px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}
 @media(max-width:620px){.vault-temp-status{align-items:flex-start;flex-direction:column}.vault-temp-status button{width:100%;justify-content:center}}
+
+.vault-calendar-note{display:block;margin-top:7px;padding:8px 10px;border-left:3px solid var(--accent);border-radius:5px;background:var(--surface);color:var(--text)!important;font-size:9px!important;line-height:1.5}
