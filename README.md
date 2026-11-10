@@ -1,5 +1,12 @@
 # NIFTY IQ — Next-Day NIFTY 50 Research System
 
+## Start here
+
+- **[Open the live NIFTY IQ application](https://nifty-next-day-prediction.onrender.com)**
+- **[Read the complete web application user manual](USER_MANUAL.md)** — setup, data import, cloud sync, feature backfill, evening ingestion, troubleshooting and current limitations.
+- API health: https://nifty-predictor-api-0gl1.onrender.com/health
+- API documentation: https://nifty-predictor-api-0gl1.onrender.com/docs
+
 ## Architecture and current implementation
 
 - Frontend: React + Vite static site on Render.
@@ -15,7 +22,7 @@
 
 ## Five required datasets
 
-Official source catalogue: [NSE Indices historical index data](https://www.niftyindices.com/reports/historical-data) exposes index OHLC in CSV format. [NSE Equity reports](https://www.nseindia.com/all-reports) and [NSE Derivatives reports](https://www.nseindia.com/all-reports-derivatives) list daily bhavcopy, participant OI, FII derivatives statistics, settlement and volatility reports. These sources are catalogued by the API; automatic download adapters are not yet enabled.
+Official source catalogue: [NSE Indices historical index data](https://www.niftyindices.com/reports/historical-data) exposes index OHLC in CSV format. [NSE Equity reports](https://www.nseindia.com/all-reports) and [NSE Derivatives reports](https://www.nseindia.com/all-reports-derivatives) list daily bhavcopy, participant OI, FII derivatives statistics, settlement and volatility reports. The backend contains download adapters that attempt to retrieve these reports; each source still requires live run verification and semantic validation before its data is considered model-ready.
 
 1. NIFTY 50 daily OHLC history
 2. F&O bhavcopy
