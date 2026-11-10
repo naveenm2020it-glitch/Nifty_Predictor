@@ -492,6 +492,68 @@ def selected_analysis_dates(limit: int = 500):
     return available_dates(limit)
 
 
+@app.post("/api/v1/ingest/fo-bhavcopy")
+async def ingest_official_fo_bhavcopy(
+    file: UploadFile = File(...),
+    trade_date: str = Form(...),
+    scheduler_token: Optional[str] = Header(None, alias="X-Scheduler-Token")
+):
+    """Accept a verified NSE UDiFF ZIP from the GitHub Actions fetch runner."""
+    expected = os.getenv("SCHEDULER_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Scheduler ingestion is not configured.")
+    if not scheduler_token or not hmac.compare_digest(scheduler_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid scheduler token.")
+    try:
+        selected_date = date.fromisoformat(trade_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="trade_date must use YYYY-MM-DD.")
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=415, detail="Upload the official NSE UDiFF ZIP file.")
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="F&O bhavcopy exceeds the 30 MB upload limit.")
+    if not raw.startswith(b"PK"):
+        raise HTTPException(status_code=415, detail="The uploaded file is not a valid ZIP archive.")
+    from . import pipeline as source
+    from .selected_analysis import _nifty_option_identity
+    try:
+        all_rows = source._csv_rows(raw, zipped=True)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Could not parse NSE UDiFF ZIP: " + str(exc)[:180])
+    nifty_rows = []
+    valid_contracts = 0
+    date_rows = 0
+    for row in all_rows:
+        row_date = source._parse_date(source._get(row, ["TradDt", "BizDt", "Trade Date"]))
+        if row_date == selected_date:
+            date_rows += 1
+        symbol, option_type, expiry, strike = _nifty_option_identity(row)
+        if symbol != "NIFTY":
+            continue
+        nifty_rows.append(row)
+        if option_type in ("CE", "PE") and expiry and strike is not None and strike > 0:
+            valid_contracts += 1
+    if not nifty_rows or not valid_contracts:
+        headers = list(all_rows[0].keys())[:35] if all_rows else []
+        raise HTTPException(status_code=422, detail=f"No valid NIFTY CE/PE contracts found in uploaded NSE file. Parsed rows={len(all_rows)}; NIFTY rows={len(nifty_rows)}; valid contracts={valid_contracts}; headers={headers}")
+    if date_rows == 0:
+        raise HTTPException(status_code=422, detail="Uploaded bhavcopy does not contain the requested trade date.")
+    ymd = selected_date.strftime("%Y%m%d")
+    filename = "BhavCopy_NSE_FO_0_0_0_" + ymd + "_F_0000.csv.zip"
+    result = source._insert_source(
+        "fo_bhavcopy", "fo_bhavcopy", "NSE India — F&O UDiFF Common Bhavcopy Final",
+        "https://nsearchives.nseindia.com/content/fo/" + filename,
+        filename, selected_date, raw, nifty_rows
+    )
+    from .selected_analysis import expiries_for_date
+    expiries = [x.isoformat() for x in expiries_for_date(selected_date)]
+    if not expiries:
+        raise HTTPException(status_code=422, detail="NIFTY contracts were stored but expiry extraction returned no valid dates.")
+    return {"status":"ingested","trade_date":selected_date.isoformat(),"nifty_rows":len(nifty_rows),
+            "valid_option_contracts":valid_contracts,"expiries":expiries,"archive":result}
+
+
 @app.post("/api/v1/analysis/prepare")
 def prepare_selected_analysis(payload: dict):
     raw_date = str(payload.get("trade_date") or "")
