@@ -286,3 +286,19 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 @media(max-width:760px){.vault-history-download{grid-template-columns:1fr}.vault-history-download>button{width:100%}.vault-history-status>div{flex-direction:column;gap:4px}}
 
 .vault-history-download>input{min-width:0;width:100%;min-height:38px;padding:9px 11px;border:1px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text);font:10px "DM Sans"}
+
+
+.vault-history-coverage{margin:0 0 14px;padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.vault-history-coverage-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.vault-history-coverage-head b{font-size:11px;color:var(--text)}
+.vault-history-coverage-head span,.vault-history-coverage-note{font-size:9px;color:var(--muted)}
+.vault-history-coverage-head button{border:1px solid var(--border);border-radius:6px;padding:6px 9px;background:var(--surface2);color:var(--text);font:600 9px "DM Sans";cursor:pointer}
+.vault-history-coverage-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.vault-history-coverage-item{min-width:0;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)}
+.vault-history-coverage-item>div:first-child{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:7px}
+.vault-history-coverage-item b{font-size:9px;color:var(--text)}
+.vault-history-coverage-item span,.vault-history-coverage-item small{font-size:8px;color:var(--muted)}
+.vault-history-coverage-track{height:6px;border-radius:99px;background:var(--border);overflow:hidden;margin-bottom:6px}
+.vault-history-coverage-track i{display:block;height:100%;border-radius:99px;background:var(--accent)}
+.vault-history-coverage-note{display:block;line-height:1.5;margin-top:10px}
+@media(max-width:760px){.vault-history-coverage-grid{grid-template-columns:1fr}.vault-history-coverage-item>div:first-child{align-items:flex-start;flex-direction:column}}
