@@ -537,7 +537,7 @@ def run_selected_analysis(payload: dict):
             raise HTTPException(status_code=422, detail="No verified NIFTY expiry is available for this date.")
     try:
         expiry = date.fromisoformat(expiry_raw)
-        return analyse_selected_session(selected_date,expiry,download_if_missing=False)
+        return analyse_selected_session(selected_date,expiry,download_if_missing=True)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
