@@ -1,0 +1,49 @@
+name: NSE F&O access probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/nse-access-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Test official NSE UDiFF bhavcopy access
+        run: |
+          python - <<'PY'
+          import requests
+          from datetime import date
+          day = date.today().strftime("%Y%m%d")
+          url = f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{day}_F_0000.csv.zip"
+          s = requests.Session()
+          s.headers.update({
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+              "Accept": "*/*",
+              "Accept-Language": "en-US,en;q=0.9",
+              "Referer": "https://www.nseindia.com/all-reports-derivatives",
+              "Connection": "keep-alive",
+          })
+          for warm in ("https://www.nseindia.com/", "https://www.nseindia.com/all-reports-derivatives"):
+              try:
+                  r=s.get(warm,timeout=15)
+                  print("WARM",r.status_code,warm)
+              except Exception as e:
+                  print("WARM_ERROR",type(e).__name__,str(e)[:160])
+          for host in ("nsearchives.nseindia.com","archives.nseindia.com"):
+              u=f"https://{host}/content/fo/BhavCopy_NSE_FO_0_0_0_{day}_F_0000.csv.zip"
+              try:
+                  r=s.get(u,timeout=25)
+                  print("RESULT",host,r.status_code,len(r.content),r.headers.get("Content-Type"),r.url)
+                  if r.status_code==200 and r.content[:2]==b"PK":
+                      open("nse-fo-bhavcopy.zip","wb").write(r.content)
+                      print("VALID_ZIP",host)
+              except Exception as e:
+                  print("ERROR",host,type(e).__name__,str(e)[:180])
+          PY
