@@ -52,7 +52,7 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
   setBusy(true);setError("");
   try{
    if(expiry&&expiries.includes(expiry)){setStatus("Running independent research agents for the selected expiry…");await runAnalysis(expiry);return;}
-   setReport(null);setExpiry("");setExpiries([]);
+   setReport(null);setExpiry("");setExpiries([]);setSourceOutcomes([]);
    setStatus("Checking and downloading official NSE files for the selected date…");
    const start=await fetch(apiBase+"/api/v1/analysis/prepare",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade_date:tradeDate})});
    const started=await start.json();if(!start.ok)throw new Error(started.detail||"Could not start NSE data download.");
