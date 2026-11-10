@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .db import connect, init_db
-from .pipeline import backfill_historical_features, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, summarize_nifty_options, summarize_price_patterns, train_walk_forward_model, validate_cloud_datasets
+from .pipeline import backfill_historical_features, generate_daily_evidence_report, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, summarize_nifty_options, summarize_price_patterns, train_walk_forward_model, validate_cloud_datasets
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -399,14 +399,16 @@ def pipeline_readiness():
     if spot and spot["first_date"] and spot["last_date"]:
         span_years = (spot["last_date"] - spot["first_date"]).days / 365.25
     missing = sorted(DATASET_KEYS - set(by_key))
-    historical_ready = not missing and span_years >= 4.8 and int(spot["dates"] if spot else 0) >= 1000
+    daily_ready = bool(spot and int(spot["dates"] or 0) >= 1)
     return {
+        "mode": "daily_incremental",
         "datasets": [dict(r) for r in coverage], "missing_datasets": missing,
-        "spot_history_years": round(span_years, 2), "spot_trading_dates": int(spot["dates"] if spot else 0), "required_spot_trading_dates": 1000, "historical_ingestion_ready": historical_ready,
-        "semantic_validation": "pending", "feature_engineering": "pending",
-        "walk_forward_validation": "pending", "validated_models": model_count,
-        "prediction_pipeline": "blocked_until_validation_passes",
-        "note": "A file archive is not proof of exchange authenticity or correct field mapping. No model is trained by this endpoint."
+        "spot_history_years": round(span_years, 2), "spot_trading_dates": int(spot["dates"] if spot else 0),
+        "historical_ingestion_ready": daily_ready,
+        "daily_data_available": daily_ready,
+        "validated_models": model_count,
+        "prediction_pipeline": "daily_evidence_report_no_five_year_gate",
+        "note": "Daily analysis uses the latest available official session reports plus rolling history already stored in cloud PostgreSQL. A five-year archive and trained ML model are not prerequisites. Missing/unmapped source fields remain explicitly unavailable."
     }
 
 
@@ -445,9 +447,9 @@ def generate_prediction(ingest_token: Optional[str] = Header(None, alias="X-Inge
     if not ingest_token or not hmac.compare_digest(ingest_token, expected):
         raise HTTPException(status_code=401, detail="Ingest token is missing or invalid.")
     try:
-        return generate_next_session_prediction()
+        return generate_daily_evidence_report()
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="Prediction generation failed: " + str(exc)[:300])
+        raise HTTPException(status_code=500, detail="Daily research generation failed: " + str(exc)[:300])
 
 
 @app.get("/api/v1/research/summary")
