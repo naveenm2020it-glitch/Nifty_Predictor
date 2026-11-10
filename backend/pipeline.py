@@ -1131,7 +1131,7 @@ def generate_daily_evidence_report():
     if participant["status"]=="analysed": votes.append(1 if participant["bias"]=="bullish" else -1 if participant["bias"]=="bearish" else 0)
     total=sum(votes); bias="bullish" if total>=2 else "bearish" if total<=-2 else "range_or_wait"
     next_day=next_nse_trading_session(trade_date)
-    calendar_note=nse_session_calendar_note(trade_date)
+    calendar_note=nse_session_calendar_note(next_day)
     quality={"spot_sessions_used":len(candles),"fo_rows":len(fo),"participant_rows":len(participants),
       "fii_rows":len(fii),"vix_rows":len(vix),"missing_agents":[k for k,v in agents.items() if v["status"] in ("missing","missing_or_unmapped")]}
     scenarios={"bias":bias,"probability_up":None,"probability_down":None,"reference_close":close,"atr14":round(atr,2),
