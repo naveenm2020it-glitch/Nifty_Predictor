@@ -52,16 +52,28 @@ For the folder import feature, use descriptive filenames so the app can classify
 
 If a filename is classified incorrectly, use the individual **Import CSV** button under the correct dataset instead.
 
-## 4. Import files into the browser
+## 4. Download historical data automatically (recommended)
 
 1. Open **NSE data centre**.
-2. Click **Select data folder** and choose the folder containing your CSV/Excel files. Grant the browser's folder permission.
-3. The app scans supported files and imports recognized datasets into this browser's local IndexedDB vault.
-4. Check that each file appears under the intended dataset, with row count and detected date range.
-5. If a file is missing or misclassified, use **Import CSV** in the correct dataset section, or rename it using the filename rules above and rescan.
-6. Click **Run local validation**.
+2. In the **Automatic 5-year historical data download** panel at the top, enter the Render `INGEST_API_TOKEN`.
+3. Click **Download 5-Year Historical Data**.
+4. Keep the page open while it runs. The progress panel refreshes every five seconds.
+5. Review the **Historical data coverage** panel for each source's date count, rows, percentage and first/last date.
+6. If the job stops or reports gaps, start it again after checking the error. Successfully archived source/date files are skipped; missing reports are retried.
 
-**Local validation is only a structural check.** It checks recognizable dates, basic OHLC consistency, date coverage and cross-dataset date overlap. A “LOCAL DATA CHECK COMPLETE” result does not prove the file is authentic, complete, correctly mapped or ready for model training.
+The downloader requests NIFTY 50 OHLC and India VIX history in date chunks, then requests available NSE daily derivatives reports for each NIFTY trading date. NSE archive coverage is not guaranteed for every historical date or every report type. A completed job with gaps is not complete historical coverage. The coverage percentage is a date-count diagnostic, not proof of correct field mapping or full contract data.
+
+## 5. Optional: import your own local files
+
+Use this only if you already have additional CSV/Excel data that you want to compare or add.
+
+1. Click **Select data folder** and choose the folder containing CSV/Excel files, or use the individual **Import CSV** controls.
+2. The app stores these files in this browser's local IndexedDB vault.
+3. Check the dataset assignments, row counts and date ranges.
+4. Click **Run local validation**.
+5. To archive those local files on the server, enter `INGEST_API_TOKEN` in the cloud import field and click **Sync local files to cloud**.
+
+**Local validation is only a structural check.** It checks recognizable dates, basic OHLC consistency, date coverage and cross-dataset date overlap. It does not prove authenticity, completeness, correct field mapping or model readiness.
 
 The local vault is tied to this browser profile and website origin. Clearing browser site data can erase it. Download backups of your original files regularly. Folder access may need to be granted again after a browser restart; Firefox may require you to select the folder again.
 
