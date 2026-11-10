@@ -71,6 +71,85 @@ def _warm_niftyindices(session):
         log.warning("Nifty Indices page warm-up failed: %s", exc)
 
 
+def _nse_index_archive_rows(session, start, end, index_name):
+    """
+    Fallback to NSE's official daily index snapshot archive when the Nifty Indices
+    historical-data API blocks a cloud request. The archive is one CSV per
+    exchange trading date; weekends/holidays legitimately return 404.
+    """
+    wanted = "".join(ch for ch in index_name.lower() if ch.isalnum())
+    results = []
+    blocked_days = 0
+    day = start
+    headers = {
+        "User-Agent": UA,
+        "Accept": "text/csv,text/plain,*/*",
+        "Referer": NSE_HOME + "/all-reports",
+    }
+    while day <= end:
+        if day.weekday() < 5:
+            filename = "ind_close_all_" + day.strftime("%d%m%Y") + ".csv"
+            urls = [
+                "https://nsearchives.nseindia.com/content/indices/" + filename,
+                "https://archives.nseindia.com/content/indices/" + filename,
+            ]
+            found = False
+            last_status = None
+            for url in urls:
+                try:
+                    response = session.get(url, headers=headers, timeout=(5, 18))
+                    last_status = response.status_code
+                    if response.status_code == 404:
+                        continue
+                    if response.status_code == 403:
+                        continue
+                    response.raise_for_status()
+                    if not _valid_file(response):
+                        continue
+                    rows = _csv_rows(response.content)
+                    for row in rows:
+                        name = _get(row, ["Index Name", "IndexName", "index"])
+                        normalized = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+                        if normalized != wanted:
+                            continue
+                        trade_date = _parse_date(_get(row, ["Index Date", "Date", "HistoricalDate"]))
+                        opening = _clean_number(_get(row, ["Open", "OPEN"]))
+                        high = _clean_number(_get(row, ["High", "HIGH"]))
+                        low = _clean_number(_get(row, ["Low", "LOW"]))
+                        close = _clean_number(_get(row, ["Closing", "Close", "CLOSE"]))
+                        if not trade_date or None in (opening, high, low, close):
+                            continue
+                        if not (start <= trade_date <= end and min(opening, high, low, close) > 0
+                                and high >= max(opening, close, low)
+                                and low <= min(opening, close, high)):
+                            continue
+                        results.append({
+                            "indexName": index_name,
+                            "HistoricalDate": trade_date.strftime("%d %b %Y"),
+                            "OPEN": str(opening), "HIGH": str(high),
+                            "LOW": str(low), "CLOSE": str(close),
+                            "VOLUME": _get(row, ["Volume", "Shares Traded"]),
+                            "TURNOVER": _get(row, ["Turnover", "Turnover (Cr)"]),
+                            "_source_url": url,
+                        })
+                    found = True
+                    break
+                except requests.RequestException as exc:
+                    log.warning("NSE index archive request failed for %s: %s", day, exc)
+            if last_status == 403 and not found:
+                blocked_days += 1
+                if blocked_days >= 3:
+                    raise RuntimeError(
+                        "NSE daily index archive also returned HTTP 403 on multiple dates; "
+                        "the cloud IP is blocked by the public source."
+                    )
+            if found:
+                blocked_days = 0
+            time.sleep(0.08)
+        day += timedelta(days=1)
+    return results
+
+
 def _nifty_index_rows(session, endpoint, start, end, index_name):
     url = NIFTY_INDICES + "/Backpage.aspx/" + endpoint
     body = {
@@ -96,13 +175,21 @@ def _nifty_index_rows(session, endpoint, start, end, index_name):
                 last_error = RuntimeError(
                     "NSE Indices blocked this cloud request (HTTP 403). "
                     "The downloader refreshed the public-page session and retried. "
-                    "This is source-side anti-bot/IP protection, not a missing-data result."
+                    "Trying the official NSE daily index archive as a separate source."
                 )
                 continue
             response.raise_for_status()
-            return _parse_double_json(response)
+            rows = _parse_double_json(response)
+            if rows:
+                return rows
+            last_error = RuntimeError("Nifty Indices returned an empty historical response.")
         except requests.RequestException as exc:
             last_error = exc
+    if endpoint == "getHistoricaldatatabletoString":
+        archive_rows = _nse_index_archive_rows(session, start, end, index_name)
+        if archive_rows:
+            log.warning("Nifty Indices API unavailable; used NSE daily index archive for %s rows", len(archive_rows))
+            return archive_rows
     raise RuntimeError(
         "Nifty Indices historical endpoint unavailable after session warm-up/retry: "
         + str(last_error)
@@ -403,7 +490,7 @@ def run_evening_ingestion():
             if _clean_number(spot.get(key)) is None:
                 raise RuntimeError("NIFTY 50 OHLC row is incomplete; daily run stopped.")
         outcomes.append(_insert_source("spot_ohlc", "nifty50_daily_ohlc_5y", "NSE Indices — NIFTY 50 five-year historical OHLC",
-            NIFTY_INDICES + "/reports/historical-data", "nifty50_" + trade_date.isoformat() + ".json",
+            (spot_rows[0].get("_source_url") or NIFTY_INDICES + "/reports/historical-data"), "nifty50_" + trade_date.isoformat() + ".json",
             trade_date, json.dumps(spot_rows).encode(), spot_rows))
 
         vix_rows = _vix_rows(nifty_session, start, trade_date)
@@ -658,7 +745,7 @@ def _run_five_year_history(job_id, start_date, end_date):
         spot_payload = [row for _, row in valid_spot]
         if not _source_exists("nifty50_daily_ohlc_5y", trade_dates[-1]):
             _insert_source("spot_ohlc", "nifty50_daily_ohlc_5y", "NSE Indices — NIFTY 50 five-year historical OHLC",
-                NIFTY_INDICES + "/reports/historical-data", "nifty50_history_" + start_date.isoformat() + "_" + end_date.isoformat() + ".json",
+                (spot_payload[0].get("_source_url") or NIFTY_INDICES + "/reports/historical-data"), "nifty50_history_" + start_date.isoformat() + "_" + end_date.isoformat() + ".json",
                 trade_dates[-1], json.dumps(spot_payload).encode(), spot_payload)
             downloaded += 1
 
