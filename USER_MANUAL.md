@@ -128,7 +128,7 @@ The NSE Data Centre now has an **Automatic 5-year historical data download** pan
 5. Click **Download 5-Year Historical Data**.
 6. Keep the API service available while the background download runs. The progress panel refreshes automatically every five seconds.
 7. Monitor processed trading dates, downloaded file count and unavailable report count.
-8. When the job finishes, review source downloads and dataset date coverage before feature generation.
+8. When the job finishes, review the **Historical data coverage** panel. It compares each dataset's distinct dates with the imported NIFTY 50 trading-date calendar and shows covered dates, rows, date range and percentage. A percentage is only a date-coverage indicator; it does not prove every report has correct columns or complete contract-level rows.
 
 The downloader requests NIFTY 50 daily OHLC and India VIX history over the five-year date range. It then iterates actual NIFTY trading dates to request NIFTY-only F&O bhavcopy rows, participant-wise OI, FII derivatives statistics, daily settlement prices and daily volatility reports. Previously archived report files are skipped where their source/date is already present.
 
