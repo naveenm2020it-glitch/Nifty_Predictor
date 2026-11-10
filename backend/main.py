@@ -530,14 +530,12 @@ def run_selected_analysis(payload: dict):
         raise HTTPException(status_code=422, detail="Selected date is not an NSE trading session.")
     choices = [x.isoformat() for x in expiries_for_date(selected_date)]
     expiry_raw = str(payload.get("expiry") or "").strip()
+    if not choices:
+        raise HTTPException(status_code=422, detail="No verified NIFTY expiry is available for this date.")
+    # Match NIFTY LAB: auto-select the nearest expiry by default, while accepting
+    # an explicit manual choice only when it exists in this exact date's bhavcopy.
     if not expiry_raw:
-        if len(choices) == 1:
-            expiry_raw = choices[0]
-        elif len(choices) > 1:
-            return {"status":"expiry_selection_required","trade_date":selected_date.isoformat(),"expiries":choices,
-                    "message":"More than one NIFTY expiry is available. Select the required expiry and click Analyse again."}
-        else:
-            raise HTTPException(status_code=422, detail="No verified NIFTY expiry is available for this date.")
+        expiry_raw = choices[0]
     try:
         expiry = date.fromisoformat(expiry_raw)
         if expiry.isoformat() not in choices:
