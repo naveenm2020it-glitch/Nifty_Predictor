@@ -525,9 +525,12 @@ def run_selected_analysis(payload: dict):
     except ValueError:
         raise HTTPException(status_code=422, detail="trade_date must use YYYY-MM-DD.")
     from .selected_analysis import expiries_for_date
+    from .market_calendar import is_nse_trading_session
+    if not is_nse_trading_session(selected_date):
+        raise HTTPException(status_code=422, detail="Selected date is not an NSE trading session.")
+    choices = [x.isoformat() for x in expiries_for_date(selected_date)]
     expiry_raw = str(payload.get("expiry") or "").strip()
     if not expiry_raw:
-        choices = [x.isoformat() for x in expiries_for_date(selected_date)]
         if len(choices) == 1:
             expiry_raw = choices[0]
         elif len(choices) > 1:
@@ -537,6 +540,8 @@ def run_selected_analysis(payload: dict):
             raise HTTPException(status_code=422, detail="No verified NIFTY expiry is available for this date.")
     try:
         expiry = date.fromisoformat(expiry_raw)
+        if expiry.isoformat() not in choices:
+            raise HTTPException(status_code=422, detail="Selected expiry is not present in the verified NIFTY bhavcopy for this date.")
         return analyse_selected_session(selected_date,expiry,download_if_missing=True)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
