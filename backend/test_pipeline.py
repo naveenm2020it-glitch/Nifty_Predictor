@@ -2,7 +2,7 @@ import io
 import unittest
 import zipfile
 
-from backend.pipeline import _clean_number, _csv_rows, _parse_date, _participant_rows
+from backend.pipeline import _clean_number, _csv_rows, _parse_date, _participant_rows, _wilson_interval
 
 
 class PipelineParserTests(unittest.TestCase):
@@ -28,6 +28,15 @@ class PipelineParserTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["Client Type"], "FII")
         self.assertEqual(rows[1]["Future Index Short"], "60")
+
+    def test_wilson_interval_is_bounded_and_ordered(self):
+        lower, upper = _wilson_interval(7, 10)
+        self.assertGreaterEqual(lower, 0.0)
+        self.assertLessEqual(upper, 1.0)
+        self.assertLess(lower, upper)
+
+    def test_wilson_interval_empty_sample_is_unknown(self):
+        self.assertEqual(_wilson_interval(0, 0), [None, None])
 
     def test_zip_bhavcopy_csv_is_read(self):
         buffer = io.BytesIO()
