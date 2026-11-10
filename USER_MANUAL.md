@@ -129,17 +129,11 @@ If upload returns:
 - **415** — use CSV for cloud import; local Excel import is converted by the browser.
 
 
-## 8. Build historical technical features
+## 8. Automatic feature generation and validation
 
-Only after NIFTY 50 daily OHLC records have been synced to the cloud:
+The five-year download job now automatically proceeds to historical feature generation and semantic validation when the archive download loop finishes. It then attempts chronological walk-forward training only if the NIFTY 50 OHLC integrity gate passes. A forecast is saved only if the model passes the out-of-sample acceptance checks. Review the **Post-download research pipeline** status shown beneath the download progress.
 
-1. Keep the ingest token entered in the Cloud archive section.
-2. Click **Build historical features** once.
-3. Click **Validate cloud datasets** and review the OHLC and derivatives field checks.
-4. Review the response. The current backfill creates technical feature snapshots from valid NIFTY 50 OHLC rows when at least 60 valid dates are available.
-5. Click **Refresh cloud status**.
-
-This is a technical-feature backfill, **not AI model training**. It creates daily return, gap, range, close location, simple ATR and moving-average features. Training is a separate step.
+If you imported additional local files after the automatic download, you can still click **Build historical features** and **Validate cloud datasets** manually. The feature builder creates daily return, gap, range, close location, simple ATR and moving-average features. A feature build by itself is not proof that a model is trained or validated.
 
 ## 9. Train and evaluate the daily direction research model
 
@@ -160,7 +154,7 @@ This first model predicts whether the next available daily NIFTY close is higher
 2. Open **Next-day prediction** to see the latest saved forecast.
 3. Review the bias, up/down model scores, reference close, ATR-based conditional zones, triggers and invalidation references.
 4. Download the **PDF report** or **Excel report** from the prediction screen.
-5. On each scheduled evening ingestion, the API updates the latest features and attempts to generate a new scenario using the previously validated model. It does not retrain the model every evening.
+5. On each scheduled evening ingestion, the API updates the latest feature snapshot and attempts to generate a scenario using the latest validated model. It only attempts a new walk-forward training run when at least 301 feature snapshots exist and the last validated model is at least 30 days old. New model versions must pass the same out-of-sample gates.
 
 The displayed next-session date is a weekday estimate; public holidays may shift the actual NSE session. Confirm the exchange calendar before using the report. The conditional price zones are research references, not executable entries or assured targets.
 
@@ -201,26 +195,26 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 | Evening workflow fails | Check the GitHub Actions secret and that it matches Render's scheduler token; inspect the job logs. |
 | No prediction appears | Expected at this stage: no validated model is currently available. Do not treat placeholders as signals. |
 
-## 14. Current research modules and remaining work
+## 14. Current module status and remaining work
 
-The following historical research views are implemented and read from archived NSE records:
+Implemented in the web application and API:
+- Historical EOD NIFTY option-chain summary from archived NSE F&O bhavcopy, including nearest expiry, max pain, put/call OI ratio and highest-OI strike references.
+- Historical NIFTY futures summary from archived bhavcopy.
+- Participant OI archive display (raw published fields; source-specific interpretation is not yet certified).
+- Daily candle-pattern summaries with occurrence counts, next-session outcome rate and 95% Wilson confidence intervals.
+- Scenario planner connected to the latest saved validated daily forecast.
+- PDF and Excel export endpoints for the daily forecast.
+- Automatic post-download technical feature generation, semantic OHLC validation and a guarded attempt at walk-forward training.
 
-- **Options intelligence:** latest NIFTY option chain from the archived F&O bhavcopy, nearest available expiry, OI-based max pain, put/call OI ratio, highest put-OI and call-OI strikes, and nearby CE/PE LTP/OI/change-OI/volume. IV and Greeks are not shown unless verified fields are available.
-- **Futures:** archived NIFTY futures contract rows with expiry, close, OI, change in OI, volume and settlement where present.
-- **FII & participant flow:** archived participant-wise OI rows and FII index-derivatives reports. FII values are aggregate index-segment context, not NIFTY-underlying-only positioning; raw fields are not yet a validated predictive feature set.
-- **Pattern intelligence:** transparent daily candle rules with next-available-session close outcomes. Win rates and Wilson intervals are withheld for fewer than 20 occurrences.
-- **Scenario planner:** displays the same validated daily next-session direction scenario as the prediction page.
+Still not complete or not yet verified:
+1. A successful end-to-end five-year download on this Render deployment, with actual NSE responses and a date-by-date gap report.
+2. Full source-specific semantic mapping for participant OI, FII derivatives, settlement and volatility data.
+3. A multi-engine predictive model that uses independently validated options, participant/FII, futures/volatility and pattern features. The current model candidate is a daily NIFTY close-direction baseline using technical OHLC features only.
+4. Implied volatility and Greeks are not calculated unless complete, appropriate option inputs are available; the current historical bhavcopy chain does not guarantee these fields.
+5. Intraday or 15-minute option-premium targets, strike selection, entry/stop-loss alerts and live option-chain prediction are not implemented in this next-day application.
+6. Historical scenario outcome tracking and full future-session calibration/monitoring.
+7. End-to-end operational verification of scheduler, NSE availability, holiday handling, retries, database durability and report exports using real downloaded data.
 
-These are historical EOD research views, not live option-chain or intraday trading signals.
+Use the application as a research and data-validation workspace until the source download and model gates pass. Do not treat historical option-chain summaries or the daily direction baseline as live or intraday trading signals.
 
-The following work still remains before the complete multi-engine product is ready:
-
-1. Run the five-year automatic downloader with configured secrets and verify actual NSE/NSE Indices responses, date coverage, and missing reports.
-2. Complete source-specific semantic mapping and data-quality tests for all F&O, participant OI, FII, settlement and volatility fields.
-3. Validate option contract identifiers, expiry/strike/lot-size rules and calculate IV/Greeks only when inputs are complete and independently checked.
-4. Build validated FII/participant positioning, futures basis and volatility-regime feature engines.
-5. Expand candle-pattern intelligence with trend/volatility/session filters, touch counts, regime segmentation and separate chronological validation.
-6. Track forecast outcomes against actual subsequent sessions and evaluate calibration, confidence intervals and stability over time.
-7. Test the entire evening cycle end-to-end on actual exchange-published data, including retry, holiday handling, database persistence, scheduled automation and exports.
-
-The currently implemented ML baseline predicts next available daily NIFTY close direction. It does not predict option-premium movement, 15-minute targets or CE/PE strike entries. Until live ingestion and the required validation gates pass, use the app for research and data validation—not as an execution or guaranteed-signal service.
+**Database retention warning:** the currently attached Render Free PostgreSQL instance is scheduled to expire on 10 December 2026. Before relying on this as a permanent archive, move the database connection string to a durable PostgreSQL provider and verify that data has been retained or backed up.
