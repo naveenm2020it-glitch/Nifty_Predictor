@@ -116,7 +116,7 @@ def _download_nse(session, day, report_name, direct_paths=(), timeout=(10, 45)):
     urls.extend("https://archives.nseindia.com/" + p.lstrip("/") for p in direct_paths)
     for url in urls:
         try:
-            response = session.get(url, timeout=(10, 45), headers={"Referer": NSE_HOME + "/all-reports-derivatives"})
+            response = session.get(url, timeout=timeout, headers={"Referer": NSE_HOME + "/all-reports-derivatives"})
             if _valid_file(response):
                 return response.content, url
             errors.append(str(response.status_code) + " " + url)
