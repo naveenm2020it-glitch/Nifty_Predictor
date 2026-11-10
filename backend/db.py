@@ -155,6 +155,16 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS ix_predictions_session ON predictions(session_date DESC);
 
+        CREATE TABLE IF NOT EXISTS selected_analysis_reports (
+          id BIGSERIAL PRIMARY KEY,
+          trade_date DATE NOT NULL,
+          expiry DATE NOT NULL,
+          report JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(trade_date, expiry)
+        );
+        CREATE INDEX IF NOT EXISTS ix_selected_analysis_created ON selected_analysis_reports(created_at DESC);
+
         CREATE TABLE IF NOT EXISTS historical_download_jobs (
           id BIGSERIAL PRIMARY KEY,
           status TEXT NOT NULL,
