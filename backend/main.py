@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import connect, init_db
-from .pipeline import backfill_historical_features, pipeline_runs, run_evening_ingestion
+from .pipeline import backfill_historical_features, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -237,6 +237,27 @@ def run_evening_job(scheduler_token: Optional[str] = Header(None, alias="X-Sched
         return run_evening_ingestion()
     except Exception as exc:
         raise HTTPException(status_code=502, detail="Evening ingestion failed: " + str(exc)[:300])
+
+
+@app.post("/api/v1/pipeline/history/download")
+def start_history_download(ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")):
+    expected = os.getenv("INGEST_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Historical download is disabled until INGEST_API_TOKEN is configured.")
+    if not ingest_token or not hmac.compare_digest(ingest_token, expected):
+        raise HTTPException(status_code=401, detail="Ingest token is missing or invalid.")
+    try:
+        return start_five_year_historical_download()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not start historical download: " + str(exc)[:250])
+
+
+@app.get("/api/v1/pipeline/history/status")
+def get_history_download_status():
+    try:
+        return historical_download_status()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Historical download status unavailable: " + str(exc)[:200])
 
 
 @app.post("/api/v1/pipeline/features/backfill")
