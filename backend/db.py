@@ -89,7 +89,6 @@ def init_db():
           fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           sha256 TEXT NOT NULL,
           byte_count BIGINT NOT NULL,
-          raw_bytes BYTEA NOT NULL,
           status TEXT NOT NULL,
           parsed_rows INTEGER NOT NULL DEFAULT 0,
           UNIQUE(source_key, report_date, sha256)
