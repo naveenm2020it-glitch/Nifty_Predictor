@@ -10,7 +10,7 @@ Last reviewed: 10 November 2026
 
 ## 1. Important: what is ready today
 
-The website and API are deployed. The current working scope is the research workspace, browser-local file vault, basic local data checks, protected CSV upload to the cloud database, ingestion-run tracking, and a limited daily technical-feature backfill.
+The website and API are deployed. The current working scope includes the research workspace, browser-local file vault, protected cloud archive, official-source daily ingestion, and a new one-click five-year historical download job. The historical downloader has been added to the codebase and requires a configured database/token plus a successful live test before its completeness can be confirmed.
 
 **This is not yet a completed next-day prediction product.** No approved model is trained or registered, and the API deliberately reports prediction status as blocked until source semantics and walk-forward validation are completed. The prediction, options, participant, futures, pattern, scenario and model-performance screens currently contain placeholders; do not use them as live trading signals.
 
@@ -107,7 +107,7 @@ The GitHub workflow uses this secret to call the protected API. Never add the to
 4. Wait for the result message. Repeat only for files that did not upload successfully.
 5. Click **Refresh cloud status**.
 
-The cloud upload is explicit; choosing a local folder does not upload it automatically. The API accepts CSV uploads up to 30 MB each. Excel files are converted to CSV in the browser before upload. Uploaded rows are archived with dataset/date/hash deduplication. The database stores file provenance and row records; it does not act as a permanent raw-binary file archive.
+The cloud upload is explicit; choosing a local folder does not upload it automatically. The new automatic historical downloader is separate: it downloads directly from the backend and does not require local files. The API accepts CSV uploads up to 30 MB each. Excel files are converted to CSV in the browser before upload. Uploaded rows are archived with dataset/date/hash deduplication. The database stores file provenance and row records; it does not act as a permanent raw-binary file archive.
 
 If upload returns:
 - **401** — the token is wrong or does not match Render's `INGEST_API_TOKEN`.
@@ -115,6 +115,28 @@ If upload returns:
 - **413** — the CSV exceeds the 30 MB upload limit; split the file into smaller date ranges.
 - **422** — check the date column and dataset format; the file may have no recognized valid dates.
 - **415** — use CSV for cloud import; local Excel import is converted by the browser.
+
+
+## 6. Download five years of historical data automatically
+
+The NSE Data Centre now has an **Automatic 5-year historical data download** panel. This downloads from configured public NSE/NSE Indices sources directly to the cloud database; you do not need to select a local folder for this path.
+
+1. Confirm the API health endpoint reports database `connected`.
+2. In the Render API service, confirm `INGEST_API_TOKEN` is set.
+3. Open the webpage → **NSE data centre**.
+4. Paste the Render `INGEST_API_TOKEN` into **Cloud import token**.
+5. Click **Download 5-Year Historical Data**.
+6. Keep the API service available while the background download runs. The progress panel refreshes automatically every five seconds.
+7. Monitor processed trading dates, downloaded file count and unavailable report count.
+8. When the job finishes, review source downloads and dataset date coverage before feature generation.
+
+The downloader requests NIFTY 50 daily OHLC and India VIX history over the five-year date range. It then iterates actual NIFTY trading dates to request NIFTY-only F&O bhavcopy rows, participant-wise OI, FII derivatives statistics, daily settlement prices and daily volatility reports. Previously archived report files are skipped where their source/date is already present.
+
+**Important limitations:** NSE report archives may not expose every report for every historical date, and formats changed over time (including the F&O bhavcopy change in July 2024). Requests can be blocked or rate-limited. The job therefore reports missing reports and may finish with gaps; it must not be interpreted as a guaranteed complete five-year dataset. FII derivatives statistics are aggregate index-segment context. NIFTY index OHLC has no traded volume field. Large five-year F&O histories can consume substantial database storage; monitor the database quota before running and keep independent backups.
+
+API diagnostics:
+- `POST /api/v1/pipeline/history/download` — protected by `X-Ingest-Token`; starts the historical download.
+- `GET /api/v1/pipeline/history/status` — reports job progress and errors.
 
 ## 7. Build historical technical features
 
