@@ -248,23 +248,32 @@ def _insert_source(dataset_key, source_key, source_name, source_url, file_name, 
 def _store_feature_rows():
     with connect() as conn:
         rows = conn.execute("""
-          SELECT trade_date,payload,record_hash FROM dataset_records
-          WHERE dataset_key='spot_ohlc'
-          ORDER BY trade_date DESC LIMIT 80
+          SELECT trade_date,jsonb_agg(payload) AS payloads,jsonb_agg(record_hash) AS hashes
+          FROM dataset_records WHERE dataset_key='spot_ohlc'
+          GROUP BY trade_date ORDER BY trade_date DESC LIMIT 80
         """).fetchall()
     rows = list(reversed(rows))
     if len(rows) < 2:
         return {"status": "waiting_for_spot_history", "rows": len(rows)}
     parsed = []
+    conflicts = 0
     for record in rows:
-        p = record["payload"]
-        o = _clean_number(_get(p, ["OPEN", "Open", "open"]))
-        h = _clean_number(_get(p, ["HIGH", "High", "high"]))
-        l = _clean_number(_get(p, ["LOW", "Low", "low"]))
-        c = _clean_number(_get(p, ["CLOSE", "Close", "close"]))
-        if None in (o, h, l, c) or min(o, h, l, c) <= 0 or h < max(o, c, l) or l > min(o, c, h):
+        candidates = []
+        for p in record["payloads"]:
+            o = _clean_number(_get(p, ["OPEN", "Open", "open"]))
+            h = _clean_number(_get(p, ["HIGH", "High", "high"]))
+            l = _clean_number(_get(p, ["LOW", "Low", "low"]))
+            c = _clean_number(_get(p, ["CLOSE", "Close", "close"]))
+            if None not in (o, h, l, c) and min(o, h, l, c) > 0 and h >= max(o, c, l) and l <= min(o, c, h):
+                candidates.append((o, h, l, c))
+        if not candidates:
             continue
-        parsed.append({"date": record["trade_date"], "open": o, "high": h, "low": l, "close": c, "hash": record["record_hash"]})
+        if len(set(candidates)) > 1:
+            conflicts += 1
+            continue
+        o, h, l, c = candidates[0]
+        combined_hash = hashlib.sha256("".join(sorted(record["hashes"])).encode()).hexdigest()
+        parsed.append({"date": record["trade_date"], "open": o, "high": h, "low": l, "close": c, "hash": combined_hash})
     if len(parsed) < 2:
         return {"status": "blocked_invalid_spot_rows", "rows": len(parsed)}
     last = parsed[-1]
@@ -295,7 +304,7 @@ def _store_feature_rows():
               features=EXCLUDED.features,created_at=NOW()
         """, (last["date"], FEATURE_SCHEMA, last["date"], fingerprint, json.dumps(feature)))
     return {"status": "stored", "trade_date": last["date"].isoformat(), "feature_schema": FEATURE_SCHEMA,
-            "history_rows": len(parsed), "features": list(feature.keys())}
+            "history_rows": len(parsed), "conflicting_spot_dates_skipped": conflicts, "features": list(feature.keys())}
 
 
 def run_evening_ingestion():
@@ -408,25 +417,35 @@ def backfill_historical_features():
     """One-time chronological feature build from already archived NIFTY OHLC rows."""
     with connect() as conn:
         records = conn.execute("""
-          SELECT trade_date,payload,record_hash FROM dataset_records
-          WHERE dataset_key='spot_ohlc' ORDER BY trade_date ASC
+          SELECT trade_date,jsonb_agg(payload) AS payloads,jsonb_agg(record_hash) AS hashes
+          FROM dataset_records WHERE dataset_key='spot_ohlc'
+          GROUP BY trade_date ORDER BY trade_date ASC
         """).fetchall()
     parsed = []
+    conflicts = 0
     for record in records:
-        p = record["payload"]
-        values = {
-            "open": _clean_number(_get(p, ["OPEN", "Open", "open"])),
-            "high": _clean_number(_get(p, ["HIGH", "High", "high"])),
-            "low": _clean_number(_get(p, ["LOW", "Low", "low"])),
-            "close": _clean_number(_get(p, ["CLOSE", "Close", "close"])),
-        }
-        if any(v is None or v <= 0 for v in values.values()):
+        candidates = []
+        for p in record["payloads"]:
+            values = {
+                "open": _clean_number(_get(p, ["OPEN", "Open", "open"])),
+                "high": _clean_number(_get(p, ["HIGH", "High", "high"])),
+                "low": _clean_number(_get(p, ["LOW", "Low", "low"])),
+                "close": _clean_number(_get(p, ["CLOSE", "Close", "close"])),
+            }
+            if any(v is None or v <= 0 for v in values.values()):
+                continue
+            if values["high"] < max(values["open"], values["close"], values["low"]) or values["low"] > min(values["open"], values["close"], values["high"]):
+                continue
+            candidates.append(values)
+        if not candidates:
             continue
-        if values["high"] < max(values["open"], values["close"], values["low"]) or values["low"] > min(values["open"], values["close"], values["high"]):
+        signatures = {tuple(round(v[k], 6) for k in ("open", "high", "low", "close")) for v in candidates}
+        if len(signatures) > 1:
+            conflicts += 1
             continue
-        parsed.append({"date": record["trade_date"], "hash": record["record_hash"], **values})
+        parsed.append({"date": record["trade_date"], "hash": hashlib.sha256("".join(sorted(record["hashes"])).encode()).hexdigest(), **candidates[0]})
     if len(parsed) < 60:
-        return {"status": "blocked_insufficient_history", "valid_spot_rows": len(parsed), "required_minimum": 60}
+        return {"status": "blocked_insufficient_history", "valid_spot_rows": len(parsed), "conflicting_spot_dates_skipped": conflicts, "required_minimum": 60}
     feature_rows = []
     for i in range(1, len(parsed)):
         window = parsed[max(0, i - 49):i + 1]
@@ -462,7 +481,7 @@ def backfill_historical_features():
             ("historical_feature_backfill", "Chronological technical feature snapshots generated from archived NIFTY OHLC",
              json.dumps({"rows": len(feature_rows), "feature_schema": FEATURE_SCHEMA,
                          "first_date": feature_rows[0][0].isoformat(), "last_date": feature_rows[-1][0].isoformat()})))
-    return {"status": "completed", "feature_rows": len(feature_rows), "feature_schema": FEATURE_SCHEMA,
+    return {"status": "completed", "feature_rows": len(feature_rows), "conflicting_spot_dates_skipped": conflicts, "feature_schema": FEATURE_SCHEMA,
             "first_date": feature_rows[0][0].isoformat(), "last_date": feature_rows[-1][0].isoformat(),
             "note": "Feature generation only; no model training or prediction was performed."}
 
