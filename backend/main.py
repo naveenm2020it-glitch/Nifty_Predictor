@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from .db import connect, init_db
 from .pipeline import backfill_historical_features, generate_daily_evidence_report, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, summarize_nifty_options, summarize_price_patterns, train_walk_forward_model, validate_cloud_datasets
+from .storage import save_temporary_file, temporary_storage_status
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -55,6 +56,37 @@ def health():
         return {"status": "ok", "database": "connected", "persistence": "postgresql_connected"}
     except Exception as exc:
         raise HTTPException(status_code=503, detail={"status": "degraded", "database": "unavailable", "reason": str(exc)[:180]})
+
+@app.get("/api/v1/storage/status")
+def storage_status():
+    """Report the current temporary file-store state without exposing filesystem paths."""
+    return temporary_storage_status()
+
+
+@app.post("/api/v1/storage/files")
+async def archive_temporary_file(
+    file: UploadFile = File(...),
+    dataset_key: str = Form(...),
+    ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")
+):
+    """Store an uploaded source file on Render's temporary filesystem."""
+    expected = os.getenv("INGEST_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Temporary file archive is disabled until INGEST_API_TOKEN is configured.")
+    if not ingest_token or not hmac.compare_digest(ingest_token, expected):
+        raise HTTPException(status_code=401, detail="Cloud import token is missing or invalid.")
+    if dataset_key not in DATASET_KEYS:
+        raise HTTPException(status_code=422, detail="Unknown dataset_key.")
+    if not file.filename or not file.filename.lower().endswith((".csv", ".xlsx", ".xls")):
+        raise HTTPException(status_code=415, detail="Upload a CSV or Excel file.")
+    payload = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(payload) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Maximum temporary file size is 30 MB.")
+    try:
+        return save_temporary_file(dataset_key, file.filename, payload)
+    except OSError as exc:
+        raise HTTPException(status_code=507, detail=f"Temporary storage write failed: {str(exc)[:160]}")
+
 
 @app.get("/api/v1/system/status")
 def system_status():
