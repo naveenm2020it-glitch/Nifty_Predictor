@@ -201,7 +201,7 @@ async def import_dataset(
             row_count,accepted_rows,rejected_rows,status,notes)
           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
         """, (dataset_key, source_name, source_url, file.filename, digest, min(dates), max(dates),
-              len(accepted)+rejected, len(accepted), rejected, status, notes)).fetchone()
+              len(accepted)+rejected+filtered, len(accepted), rejected, status, notes)).fetchone()
         import_id = item["id"]
         conn.executemany("""
           INSERT INTO dataset_records(dataset_key,trade_date,record_hash,source_import_id,payload)
