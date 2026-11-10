@@ -220,3 +220,6 @@ Still not complete or not yet verified:
 Use the application as a research and data-validation workspace until the source download and model gates pass. Do not treat historical option-chain summaries or the daily direction baseline as live or intraday trading signals.
 
 **Database retention warning:** the currently attached Render Free PostgreSQL instance is scheduled to expire on 10 December 2026. Before relying on this as a permanent archive, move the database connection string to a durable PostgreSQL provider and verify that data has been retained or backed up.
+
+### Market holiday behaviour
+On an NSE holiday, the report uses the latest successfully stored completed trading session as its input date and assigns the report to the next configured NSE trading session. The current calendar includes NSE 2026 equity holidays and the 8-Nov-2026 Muhurat special session. Update `backend/market_calendar.py` from the official NSE annual holiday circular each year. A calendar does not guarantee that source files have downloaded; always check source status and input cutoff date.
