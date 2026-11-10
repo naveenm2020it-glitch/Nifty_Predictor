@@ -1,60 +1,141 @@
-name: NSE F&O access probe
+name: NSE F&O automatic ingestion
 
 on:
   push:
     branches: [main]
     paths:
       - ".github/workflows/nse-access-probe.yml"
+  schedule:
+    # 20:30 IST weekdays, after NSE end-of-day reports are normally published.
+    - cron: "0 15 * * 1-5"
   workflow_dispatch:
+    inputs:
+      trade_date:
+        description: "Market date (YYYY-MM-DD). Leave blank to backfill the latest 7 calendar days."
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
+concurrency:
+  group: nifty-iq-nse-fo-ingestion
+  cancel-in-progress: false
+
 jobs:
-  probe:
+  download-and-ingest:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
-      - name: Test official NSE UDiFF bhavcopy access
+      - name: Download verified official NSE F&O bhavcopy and send it to NIFTY IQ
+        env:
+          API_URL: https://nifty-predictor-api-0gl1.onrender.com
+          SCHEDULER_TOKEN: ${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
+          DATE_INPUT: ${{ inputs.trade_date }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           python - <<'PY'
-          import requests, zipfile, io, csv
-          from datetime import date
-          day = "20261109"  # reproduce the selected market date that failed in Render
-          url = f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{day}_F_0000.csv.zip"
-          s = requests.Session()
+          import csv, io, json, os, time, zipfile
+          from datetime import date, datetime, timedelta
+          import requests
+
+          api=os.environ["API_URL"].rstrip("/")
+          token=os.environ.get("SCHEDULER_TOKEN","")
+          if not token:
+              raise SystemExit("Missing GitHub secret NIFTY_IQ_SCHEDULER_TOKEN.")
+          requested=os.environ.get("DATE_INPUT","").strip()
+          if requested:
+              dates=[date.fromisoformat(requested)]
+          elif os.environ.get("EVENT_NAME")=="push":
+              dates=[date(2026,11,9)]
+          else:
+              today=date.today()
+              dates=[today-timedelta(days=i) for i in range(1,8)]
+
+          s=requests.Session()
           s.headers.update({
-              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-              "Accept": "*/*",
-              "Accept-Language": "en-US,en;q=0.9",
-              "Referer": "https://www.nseindia.com/all-reports-derivatives",
-              "Connection": "keep-alive",
+              "User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+              "Accept":"*/*",
+              "Accept-Language":"en-US,en;q=0.9",
+              "Referer":"https://www.nseindia.com/all-reports-derivatives",
+              "Connection":"keep-alive",
           })
-          for warm in ("https://www.nseindia.com/", "https://www.nseindia.com/all-reports-derivatives"):
+          for warm in ("https://www.nseindia.com/","https://www.nseindia.com/all-reports-derivatives"):
               try:
-                  r=s.get(warm,timeout=15)
-                  print("WARM",r.status_code,warm)
-              except Exception as e:
-                  print("WARM_ERROR",type(e).__name__,str(e)[:160])
-          for host in ("nsearchives.nseindia.com","archives.nseindia.com"):
-              u=f"https://{host}/content/fo/BhavCopy_NSE_FO_0_0_0_{day}_F_0000.csv.zip"
+                  rr=s.get(warm,timeout=20)
+                  print("NSE_SESSION",rr.status_code,warm)
+              except Exception as exc:
+                  print("NSE_SESSION_WARNING",type(exc).__name__,str(exc)[:160])
+
+          uploaded=0
+          for day in dates:
+              ymd=day.strftime("%Y%m%d")
+              filename=f"BhavCopy_NSE_FO_0_0_0_{ymd}_F_0000.csv.zip"
+              raw=None
+              for host in ("nsearchives.nseindia.com","archives.nseindia.com"):
+                  url=f"https://{host}/content/fo/{filename}"
+                  try:
+                      response=s.get(url,timeout=45)
+                      print("NSE_FILE",day,host,response.status_code,len(response.content))
+                      if response.status_code==200 and response.content[:2]==b"PK":
+                          raw=response.content
+                          source_url=url
+                          break
+                  except Exception as exc:
+                      print("NSE_DOWNLOAD_ERROR",day,host,type(exc).__name__,str(exc)[:160])
+              if raw is None:
+                  print("SKIP_NO_ARCHIVE",day)
+                  continue
+
               try:
-                  r=s.get(u,timeout=25)
-                  print("RESULT",host,r.status_code,len(r.content),r.headers.get("Content-Type"),r.url)
-                  if r.status_code==200 and r.content[:2]==b"PK":
-                      open("nse-fo-bhavcopy.zip","wb").write(r.content)
-                      print("VALID_ZIP",host)
-                      z=zipfile.ZipFile(io.BytesIO(r.content))
-                      name=next(n for n in z.namelist() if n.lower().endswith(".csv"))
-                      with z.open(name) as stream:
+                  with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                      csv_name=next(n for n in z.namelist() if n.lower().endswith(".csv"))
+                      with z.open(csv_name) as stream:
                           rows=list(csv.DictReader(io.TextIOWrapper(stream,encoding="utf-8-sig")))
-                      print("CSV_FILE",name,"ROWS",len(rows))
-                      print("HEADERS",list(rows[0].keys()) if rows else [])
-                      nifty=[x for x in rows if str(x.get("TckrSymb","")).strip().upper()=="NIFTY"]
-                      print("NIFTY_ROWS",len(nifty))
-                      print("NIFTY_SAMPLE",nifty[:2])
-                      print("NIFTY_OPT_TYPES",sorted({str(x.get("OptnTp","")) for x in nifty}))
-                      print("NIFTY_EXPIRIES",sorted({str(x.get("XpryDt","")) for x in nifty})[:20])
-              except Exception as e:
-                  print("ERROR",host,type(e).__name__,str(e)[:180])
+              except Exception as exc:
+                  raise SystemExit(f"Invalid NSE ZIP for {day}: {exc}")
+
+              nifty=[]
+              valid=0
+              for row in rows:
+                  if str(row.get("TckrSymb","")).strip().upper()!="NIFTY":
+                      continue
+                  nifty.append(row)
+                  try:
+                      strike=float(row.get("StrkPric") or 0)
+                  except (TypeError,ValueError):
+                      strike=0
+                  if row.get("OptnTp") in ("CE","PE") and row.get("XpryDt") and strike>0:
+                      valid+=1
+              trade_rows=sum(1 for row in rows if str(row.get("TradDt","")).strip()==day.isoformat())
+              print("VALIDATE",day,"total_rows",len(rows),"nifty_rows",len(nifty),"option_contracts",valid,"trade_date_rows",trade_rows)
+              if not nifty or not valid or not trade_rows:
+                  raise SystemExit(f"NSE file failed NIFTY/date/option validation for {day}.")
+
+              files={"file":(filename,raw,"application/zip")}
+              data={"trade_date":day.isoformat()}
+              headers={"X-Scheduler-Token":token,"Accept":"application/json"}
+              last=None
+              for attempt in range(5):
+                  try:
+                      result=requests.post(api+"/api/v1/ingest/fo-bhavcopy",headers=headers,files=files,data=data,timeout=180)
+                      print("BACKEND_INGEST",day,result.status_code,result.text[:3000])
+                      if result.ok:
+                          last=result.json()
+                          break
+                      if result.status_code not in (502,503,504):
+                          result.raise_for_status()
+                      last=result.text
+                  except Exception as exc:
+                      last=exc
+                  time.sleep(20)
+              if not isinstance(last,dict):
+                  raise SystemExit(f"Backend ingestion failed for {day}: {last}")
+              print("INGESTED_EXPIRIES",day,json.dumps(last.get("expiries",[])))
+              uploaded+=1
+
+          if uploaded==0:
+              raise SystemExit("No NSE F&O bhavcopy was ingested. Check archive publication and runner logs.")
+          print("INGESTION_COMPLETE",uploaded)
           PY
