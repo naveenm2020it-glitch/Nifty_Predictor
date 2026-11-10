@@ -12,6 +12,7 @@
 - Frontend: React + Vite static site on Render.
 - API: FastAPI on Render.
 - Persistence: portable PostgreSQL through `DATABASE_URL`. **Recommended free-first target: Neon Postgres**, whose current published Free plan includes 1 GB database storage per project and 100 compute-hours per month; monitor usage and keep independent exports. Render Free Postgres is not suitable for long-term history because Render documents a 30-day expiry. The API can be moved by changing `DATABASE_URL` without changing application code.
+- Temporary file archive: a replaceable storage adapter writes explicitly uploaded CSV copies to the Render service's ephemeral filesystem (`/tmp/nifty-iq-storage` by default). It is temporary and can be cleared by restarts, redeploys or instance replacement; it is not a backup or permanent history store.
 - Browser vault: IndexedDB holds imported source files locally. Nothing is sent to the cloud until the user enters the configured import token and presses **Sync local files to cloud**.
 - Cloud archive: immutable source-file provenance (URL, date, retrieval time and SHA-256; compressed raw files are not retained in the database) plus row-level deduplication by dataset, trading date and row hash. Re-uploading the same file is idempotent. Raw source binaries are processed transiently and are not retained in PostgreSQL.
 - Feature store: date-keyed daily feature snapshots are versioned by feature schema and source fingerprint, so later daily runs can update only the newest session.
