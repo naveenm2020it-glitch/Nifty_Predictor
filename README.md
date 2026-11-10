@@ -6,7 +6,7 @@
 - API: FastAPI on Render.
 - Persistence: portable PostgreSQL through `DATABASE_URL`. **Recommended free-first target: Neon Postgres**, whose current published Free plan includes 1 GB database storage per project and 100 compute-hours per month; monitor usage and keep independent exports. Render Free Postgres is not suitable for long-term history because Render documents a 30-day expiry. The API can be moved by changing `DATABASE_URL` without changing application code.
 - Browser vault: IndexedDB holds imported source files locally. Nothing is sent to the cloud until the user enters the configured import token and presses **Sync local files to cloud**.
-- Cloud archive: immutable file-import metadata plus row-level deduplication by dataset, trading date and row hash. Re-uploading the same file is idempotent.
+- Cloud archive: immutable source-file provenance (URL, date, retrieval time and SHA-256; compressed raw files are not retained in the database) plus row-level deduplication by dataset, trading date and row hash. Re-uploading the same file is idempotent.
 - Feature store: date-keyed daily feature snapshots are versioned by feature schema and source fingerprint, so later daily runs can update only the newest session.- Model registry: database schema is prepared for versioned model metadata, binary artifacts, feature schema, validation metrics and training cutoff.
 - Prediction registry: schema is prepared for daily scenarios and later outcome evaluation.
 - Official-source downloader: NIFTY 50 OHLC and India VIX use NSE Indices historical endpoints; derivatives reports are requested through NSE's report archive and stored with raw bytes, source URL, report date and SHA-256.
