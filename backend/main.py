@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from .db import connect, init_db
 from .pipeline import backfill_historical_features, generate_daily_evidence_report, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, summarize_nifty_options, summarize_price_patterns, train_walk_forward_model, validate_cloud_datasets
 from .storage import save_temporary_file, temporary_storage_status
+from .selected_analysis import analyse_selected_session, available_dates, expiries_for_date, _download_selected
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -482,6 +483,57 @@ def generate_prediction(ingest_token: Optional[str] = Header(None, alias="X-Inge
         return generate_daily_evidence_report()
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Daily research generation failed: " + str(exc)[:300])
+
+
+
+@app.get("/api/v1/analysis/dates")
+def selected_analysis_dates(limit: int = 500):
+    return available_dates(limit)
+
+
+@app.post("/api/v1/analysis/prepare")
+def prepare_selected_analysis(payload: dict):
+    raw_date = str(payload.get("trade_date") or "")
+    try:
+        selected_date = date.fromisoformat(raw_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="trade_date must be YYYY-MM-DD.")
+    from .market_calendar import is_nse_trading_session
+    if not is_nse_trading_session(selected_date):
+        raise HTTPException(status_code=422, detail="Selected date is not an NSE trading session.")
+    try:
+        sources = _download_selected(selected_date)
+        expiries = [x.isoformat() for x in expiries_for_date(selected_date)]
+        return {"status":"prepared" if expiries else "missing_expiry_data",
+                "trade_date":selected_date.isoformat(),"expiries":expiries,"sources":sources,
+                "message":"Required date-specific NSE reports were checked/downloaded. Select one of the verified expiries." if expiries else "NSE files did not provide a mapped NIFTY option expiry for this date."}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Selected-date NSE data preparation failed: "+str(exc)[:300])
+
+
+@app.post("/api/v1/analysis/run")
+def run_selected_analysis(payload: dict):
+    try:
+        selected_date = date.fromisoformat(str(payload.get("trade_date") or ""))
+        expiry = date.fromisoformat(str(payload.get("expiry") or ""))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="trade_date and expiry must use YYYY-MM-DD.")
+    if expiry < selected_date:
+        raise HTTPException(status_code=422, detail="Expiry cannot be earlier than selected trade date.")
+    try:
+        return analyse_selected_session(selected_date,expiry,
+            int(payload.get("itm_count",7)),int(payload.get("otm_count",7)),download_if_missing=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Selected-date analysis failed: "+str(exc)[:300])
+
+
+@app.get("/api/v1/analysis/latest")
+def latest_selected_analysis():
+    with connect() as conn:
+        row=conn.execute("SELECT trade_date,expiry,report,created_at FROM selected_analysis_reports ORDER BY created_at DESC LIMIT 1").fetchone()
+    return {"item":dict(row) if row else None}
 
 
 @app.get("/api/v1/research/summary")
