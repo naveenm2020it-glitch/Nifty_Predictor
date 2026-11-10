@@ -16,7 +16,7 @@
     "react-dom": "latest",
     "lucide-react": "latest",
     "recharts": "latest",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/react": "latest",
