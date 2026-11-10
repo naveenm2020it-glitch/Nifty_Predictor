@@ -4,7 +4,7 @@
 
 - Frontend: React + Vite static site on Render.
 - API: FastAPI on Render.
-- Persistence: portable PostgreSQL through `DATABASE_URL`. Do not use Render Free Postgres for important long-term history: Render documents a 30-day expiry for free databases. Connect a non-expiring database plan/provider and retain independent exports/backups.
+- Persistence: portable PostgreSQL through `DATABASE_URL`. **Recommended free-first target: Neon Postgres**, whose current published Free plan includes 1 GB database storage per project and 100 compute-hours per month; monitor usage and keep independent exports. Render Free Postgres is not suitable for long-term history because Render documents a 30-day expiry. The API can be moved by changing `DATABASE_URL` without changing application code.
 - Browser vault: IndexedDB holds imported source files locally. Nothing is sent to the cloud until the user enters the configured import token and presses **Sync local files to cloud**.
 - Cloud archive: immutable file-import metadata plus row-level deduplication by dataset, trading date and row hash. Re-uploading the same file is idempotent.
 - Feature store: date-keyed daily feature snapshots are versioned by feature schema and source fingerprint, so later daily runs can update only the newest session.\n- Model registry: database schema is prepared for versioned model metadata, binary artifacts, feature schema, validation metrics and training cutoff.
@@ -28,7 +28,7 @@
 
 ## Cloud import setup
 
-1. Connect a durable PostgreSQL database to the API service by setting `DATABASE_URL` in Render.
+1. Create a Neon PostgreSQL project, copy its pooled or direct connection string, and set `DATABASE_URL` in the Render API service. Neon Free currently advertises 1 GB database storage and 100 CU-hours per month; this is suitable for initial development, not a guarantee of unlimited free capacity.
 2. Set a strong random `INGEST_API_TOKEN` environment variable on the API service.
 3. Redeploy the API after setting both variables.
 4. In the app's NSE Data Centre, enter the same token and choose **Sync local files to cloud**. This is an explicit upload; the local browser vault remains intact.
