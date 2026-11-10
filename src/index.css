@@ -234,3 +234,12 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 .vault-folder-prompt small{color:var(--muted);font-size:8px}
 .vault-folder-prompt button{display:flex;align-items:center;gap:7px;white-space:nowrap;flex-shrink:0}
 @media(max-width:620px){.vault-folder-prompt{align-items:flex-start;flex-direction:column}.vault-folder-prompt button{width:100%;justify-content:center}}
+
+.vault-cloud-sync{display:grid;grid-template-columns:minmax(180px,1fr) minmax(170px,240px) auto;gap:10px;align-items:center;padding:13px;margin:0 0 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)}
+.vault-cloud-sync>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.vault-cloud-sync b{font:800 10px Manrope;color:var(--text)}
+.vault-cloud-sync small{font-size:8px;line-height:1.5;color:var(--muted)}
+.vault-cloud-sync input{min-width:0;width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font:9px "DM Mono"}
+.vault-cloud-sync button{display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.vault-cloud-sync>small{grid-column:1/-1;padding-top:2px}
+@media(max-width:760px){.vault-cloud-sync{grid-template-columns:1fr}.vault-cloud-sync>small{grid-column:auto}.vault-cloud-sync button{width:100%}}
