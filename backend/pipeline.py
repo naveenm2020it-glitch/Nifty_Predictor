@@ -150,7 +150,7 @@ def _participant_rows(raw):
                          if any(token in line.lower() for token in ("client type", "participant", "future index long"))), None)
     if header_index is None:
         header_index = 1 if len(lines) > 1 else 0
-    reader = csv.DictReader(io.StringIO("\\n".join(lines[header_index:])))
+    reader = csv.DictReader(io.StringIO("\n".join(lines[header_index:])))
     return [{str(k).strip(): (v.strip() if isinstance(v, str) else v)
              for k, v in row.items() if k is not None} for row in reader]
 
@@ -350,7 +350,7 @@ def run_evening_ingestion():
             trade_date, json.dumps(spot_rows).encode(), spot_rows))
 
         vix_rows = _vix_rows(nifty_session, start, trade_date)
-        vix_for_day = [r for r in vix_rows if _parse_date(r.get("date")) == trade_date]
+        vix_for_day = [r for r in vix_rows if _parse_date(r.get("date") or r.get("HistoricalDate")) == trade_date]
         if not vix_for_day:
             outcomes.append({"source": "india_vix", "status": "missing", "error": "No India VIX row for NIFTY trade date."})
         else:
@@ -416,7 +416,7 @@ def run_evening_ingestion():
                 log.exception("Source %s failed", source_key)
                 outcomes.append({"source": source_key, "status": "missing", "error": str(exc)[:260]})
         feature_result = _store_feature_rows()
-        required = {"nifty50_daily_ohlc", "india_vix", "fo_bhavcopy", "participant_oi", "fii_derivatives", "fo_settlement", "fo_volatility"}
+        required = {"nifty50_daily_ohlc_5y", "india_vix", "fo_bhavcopy", "participant_oi", "fii_derivatives", "fo_settlement", "fo_volatility"}
         good = {x.get("source") for x in outcomes if x.get("status") in ("downloaded", "already_archived")}
         complete = required.issubset(good)
         result = {"trade_date": trade_date.isoformat(), "complete_source_set": complete,
