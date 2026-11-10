@@ -203,16 +203,16 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 
 ## 14. Remaining work before the full multi-engine product is complete
 
-The following work remains required:
+The first daily NIFTY direction research baseline, chronological walk-forward evaluation, forecast display and PDF/Excel report endpoints are implemented. They still require real historical data, configured secrets and successful deployment/runtime verification.
 
-1. Confirm the five-year historical datasets are complete, correctly mapped and semantically validated.
-2. Validate NSE report parsing, contract selection, participant fields, expiry handling, trading calendar and missing-session rules.
-3. Build a complete historical feature set without look-ahead leakage.
-4. Train candidate models using chronological splits.
-5. Run walk-forward and out-of-sample evaluation; publish sample counts, confidence intervals and calibration metrics.
-6. Register only models that pass predefined validation criteria.
-7. Implement and test next-day scenario generation and invalidation logic.
-8. Connect verified outputs to the UI and generate reproducible PDF/Excel reports.
-9. Verify the full daily cycle end-to-end using actual exchange-published data.
+The following larger product modules remain incomplete:
 
-Until those steps pass, the app should be used as a data-import and research-readiness workspace only—not as a trading signal service.
+1. Verify the full five-year automatic NSE/NSE Indices download against real source responses and report exact missing dates.
+2. Complete source-specific semantic mapping and data-quality tests for F&O bhavcopy, participant OI, FII derivatives, settlement and volatility files.
+3. Build dedicated options analytics from validated contracts: expiry/strike chain, PCR, max pain, OI support/resistance and reliable IV/Greeks only when source fields support them.
+4. Build separate participant/FII positioning, futures basis and volatility-regime feature engines.
+5. Build historical pattern detection with touch counts, regime filters, confidence intervals and walk-forward tests.
+6. Add scenario-specific model evaluation and forecast outcome tracking across future sessions.
+7. Test the entire automated evening process end-to-end on actual exchange-published data, including retry, holiday handling, database persistence and exports.
+
+The current direction model is a daily index-close research baseline only. It is not the requested full options/intraday prediction engine. Until live ingestion and all required module validations pass, use the application for research and data validation—not as a trading signal service.
