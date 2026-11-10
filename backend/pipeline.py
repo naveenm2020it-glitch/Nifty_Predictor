@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import time
+import threading
 import zipfile
 from datetime import date, datetime, timedelta
 from urllib.parse import quote
@@ -524,7 +525,6 @@ def pipeline_runs(limit=30):
 
 # Long-running five-year historical backfill. Progress is persisted after each
 # trading date so a failed run can be restarted without duplicating records.
-import threading
 _history_lock = threading.Lock()
 
 def _history_job_update(job_id, **fields):
