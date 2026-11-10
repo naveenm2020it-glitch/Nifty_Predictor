@@ -135,8 +135,9 @@ Only after NIFTY 50 daily OHLC records have been synced to the cloud:
 
 1. Keep the ingest token entered in the Cloud archive section.
 2. Click **Build historical features** once.
-3. Review the response. The current backfill creates technical feature snapshots from valid NIFTY 50 OHLC rows when at least 60 valid dates are available.
-4. Click **Refresh cloud status**.
+3. Click **Validate cloud datasets** and review the OHLC and derivatives field checks.
+4. Review the response. The current backfill creates technical feature snapshots from valid NIFTY 50 OHLC rows when at least 60 valid dates are available.
+5. Click **Refresh cloud status**.
 
 This is a technical-feature backfill, **not AI model training**. It creates daily return, gap, range, close location, simple ATR and moving-average features. Training is a separate step.
 
