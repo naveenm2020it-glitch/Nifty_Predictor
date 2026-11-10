@@ -194,7 +194,7 @@ def _option_rows(trade_date: date, expiry: date):
     return contracts
 
 
-def analyse_selected_session(trade_date: date, expiry: date, itm_count: int=7, otm_count: int=7, download_if_missing: bool=True):
+def analyse_selected_session(trade_date: date, expiry: date, download_if_missing: bool=False):
     if not src.is_nse_trading_session(trade_date):
         raise ValueError("Selected date is not an NSE trading session.")
     if download_if_missing:
@@ -211,10 +211,8 @@ def analyse_selected_session(trade_date: date, expiry: date, itm_count: int=7, o
         raise ValueError("No NIFTY option contracts found for the selected date and expiry. Check NSE source availability.")
     strikes=sorted(contracts)
     atm=min(strikes,key=lambda x:abs(x-close))
-    atm_index=strikes.index(atm)
-    start=max(0,atm_index-max(0,min(itm_count,25)))
-    end=min(len(strikes),atm_index+max(0,min(otm_count,25))+1)
-    chosen=strikes[start:end]
+    # Return the complete verified expiry chain. No arbitrary ITM/OTM window.
+    chosen=strikes
     chain=[]
     for strike in chosen:
         sides=contracts[strike]; ce=sides.get("CE",{}); pe=sides.get("PE",{})
@@ -233,7 +231,7 @@ def analyse_selected_session(trade_date: date, expiry: date, itm_count: int=7, o
       "evidence":{"expiry":expiry.isoformat(),"atm_strike":atm,"contracts":len(contracts),"call_oi":all_ce,"put_oi":all_pe,
       "pcr":round(all_pe/all_ce,3) if all_ce else None,"max_pain":min(pain)[1] if pain else None,
       "highest_put_oi_support":max(pe_oi)[1] if pe_oi else None,"highest_call_oi_resistance":max(ce_oi)[1] if ce_oi else None,
-      "selected_strike_count":len(chosen)},"chain":chain,
+      "selected_strike_count":len(chosen),"total_expiry_strikes":len(strikes)},"chain":chain,
       "note":"Historical EOD bhavcopy values; premiums are closing prices, not live executable quotes."}
 
     recent=spot_rows[-60:]
@@ -295,7 +293,7 @@ def analyse_selected_session(trade_date: date, expiry: date, itm_count: int=7, o
       "vix_rows":len(vix_rows),"agents_available":sum(1 for a in agents.values() if a["status"]=="analysed"),
       "agents_missing":[k for k,v in agents.items() if v["status"]!="analysed"]}
     report={"status":"completed","trade_date":trade_date.isoformat(),"next_session":src.next_nse_trading_session(trade_date).isoformat(),
-      "expiry":expiry.isoformat(),"spot_close":close,"atm_strike":atm,"itm_strikes":itm_count,"otm_strikes":otm_count,
+      "expiry":expiry.isoformat(),"spot_close":close,"atm_strike":atm,"strike_count":len(chosen),
       "downloaded_sources":download_outcomes,"agents":agents,"coordinator":{"bias":bias,"weighted_scores":scores,
       "consensus_note":"Coordinator combines only agents with mapped data; unavailable agents do not vote.",
       "option_trade_plan":{"status":"skipped_no_live_market_feed","reason":"Selected-date EOD option prices cannot be treated as tomorrow's executable premium or entry."}},
