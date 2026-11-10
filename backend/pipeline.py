@@ -1134,6 +1134,8 @@ def generate_daily_evidence_report():
         "target_zone":[round(close-atr,2),round(close-.5*atr,2)],"invalidation":round(last["high"],2)},
       "range":{"condition":"If neither side confirms, wait.","lower_reference":round(close-.35*atr,2),"upper_reference":round(close+.35*atr,2)},
       "latest_input_date":trade_date.isoformat(),
+      "option_trade_plan":{"status":"skipped_no_live_market_feed","instrument":None,"option_type":None,"strike":None,"expiry":None,"entry_premium":None,"target_premium":None,"stop_loss_premium":None,"reason":"The system has no reliable next-session live option quote or execution-time confirmation. EOD option-chain data alone cannot establish tomorrow\u2019s executable CE/PE premium. No CE/PE BUY call will be issued; use the NIFTY spot scenario levels only."},
+      "spot_trade_plan":{"status":"conditional_next_session_levels","bullish_trigger":round(last["high"],2),"bullish_invalidation":round(last["low"],2),"bearish_trigger":round(last["low"],2),"bearish_invalidation":round(last["high"],2),"note":"These are NIFTY spot reference levels derived from the latest completed session, not live entry signals. Confirm price behaviour independently during the next session."},
       "warning":"Daily evidence-based research, not a calibrated probability or guaranteed forecast. Next session date is a weekday estimate; check NSE holidays."}
     with connect() as conn:
         old=conn.execute("SELECT id FROM predictions WHERE session_date=%s AND model_version_id IS NULL ORDER BY generated_at DESC LIMIT 1",(next_day,)).fetchone()
