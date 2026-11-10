@@ -578,7 +578,7 @@ def _run_five_year_history(job_id, start_date, end_date):
         # Store the full official index history as one source import, with each row dated individually.
         spot_payload = [row for _, row in valid_spot]
         if not _source_exists("nifty50_daily_ohlc_5y", trade_dates[-1]):
-            _insert_source("spot_ohlc", "nifty50_daily_ohlc", "NSE Indices — NIFTY 50 historical OHLC",
+            _insert_source("spot_ohlc", "nifty50_daily_ohlc_5y", "NSE Indices — NIFTY 50 five-year historical OHLC",
                 NIFTY_INDICES + "/reports/historical-data", "nifty50_history_" + start_date.isoformat() + "_" + end_date.isoformat() + ".json",
                 trade_dates[-1], json.dumps(spot_payload).encode(), spot_payload)
             downloaded += 1
