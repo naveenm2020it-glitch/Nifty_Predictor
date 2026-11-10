@@ -142,6 +142,18 @@ def _csv_rows(raw, zipped=False):
              for k, v in row.items() if k is not None} for row in reader]
 
 
+def _participant_rows(raw):
+    text = raw.decode("utf-8-sig", errors="replace")
+    lines = [line for line in text.splitlines() if line.strip()]
+    header_index = next((i for i, line in enumerate(lines[:12])
+                         if any(token in line.lower() for token in ("client type", "participant", "future index long"))), None)
+    if header_index is None:
+        header_index = 1 if len(lines) > 1 else 0
+    reader = csv.DictReader(io.StringIO("\\n".join(lines[header_index:])))
+    return [{str(k).strip(): (v.strip() if isinstance(v, str) else v)
+             for k, v in row.items() if k is not None} for row in reader]
+
+
 def _xls_rows(raw):
     book = xlrd.open_workbook(file_contents=raw)
     rows_out = []
@@ -376,6 +388,8 @@ def run_evening_ingestion():
                     rows = nifty_rows
                 elif kind == "xls":
                     rows = _xls_rows(raw)
+                elif source_key == "participant_oi":
+                    rows = _participant_rows(raw)
                 else:
                     rows = _csv_rows(raw)
                 if source_key == "participant_oi" and rows:
