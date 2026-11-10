@@ -73,29 +73,47 @@ def _download_selected(trade_date: date):
         session = src.requests.Session()
         session.headers.update({"User-Agent":src.UA,"Content-Type":"application/json; charset=UTF-8",
                                 "X-Requested-With":"XMLHttpRequest","Referer":src.NIFTY_INDICES+"/reports/historical-data"})
-        rows = src._nifty_index_rows(session,"getHistoricaldatatabletoString",trade_date,trade_date,"NIFTY 50")
+        rows = []
+        index_error = None
+        try:
+            rows = src._nifty_index_rows(session,"getHistoricaldatatabletoString",trade_date,trade_date,"NIFTY 50")
+        except Exception as exc:
+            index_error = str(exc)
+            log.warning("Nifty Indices history failed for %s; trying archive independently: %s",trade_date,exc)
         rows = [r for r in rows if src._parse_date(r.get("HistoricalDate")) == trade_date]
         if not rows:
-            rows = src._nse_index_archive_rows(session,trade_date,trade_date,"NIFTY 50")
-        if not rows:
-            raise RuntimeError("Official NIFTY 50 OHLC data was not returned for this date.")
-        outcomes.append(src._insert_source("spot_ohlc","nifty50_daily_ohlc","NSE Indices — NIFTY 50 daily OHLC",
-            rows[0].get("_source_url") or src.NIFTY_INDICES+"/reports/historical-data",
-            "nifty50_"+trade_date.isoformat()+".json",trade_date,json.dumps(rows).encode(),rows))
+            try:
+                rows = src._nse_index_archive_rows(session,trade_date,trade_date,"NIFTY 50")
+            except Exception as exc:
+                index_error = (index_error + " | " if index_error else "") + str(exc)
+                log.warning("NSE daily index archive failed for %s: %s",trade_date,exc)
+        if rows:
+            outcomes.append(src._insert_source("spot_ohlc","nifty50_daily_ohlc","NSE official NIFTY 50 daily OHLC",
+                rows[0].get("_source_url") or src.NIFTY_INDICES+"/reports/historical-data",
+                "nifty50_"+trade_date.isoformat()+".json",trade_date,json.dumps(rows).encode(),rows))
+        else:
+            outcomes.append({"source":"nifty50_daily_ohlc","status":"missing",
+                "reason":(index_error or "No verified official NIFTY 50 OHLC row was returned for this date.")[:240]})
     else:
         outcomes.append({"source":"nifty50_daily_ohlc","status":"already_archived","rows":len(spot)})
 
     if not src._source_exists("india_vix",trade_date):
-        session = src.requests.Session()
-        session.headers.update({"User-Agent":src.UA,"Referer":src.NIFTY_INDICES+"/reports/historical-data"})
-        vix = [r for r in src._vix_rows(session,trade_date,trade_date)
-               if src._parse_date(r.get("date") or r.get("HistoricalDate")) == trade_date]
-        if vix:
-            outcomes.append(src._insert_source("vix_volatility","india_vix","NSE Indices — India VIX historical OHLC",
-                src.NIFTY_INDICES+"/reports/historical-data","india_vix_"+trade_date.isoformat()+".json",
-                trade_date,json.dumps(vix).encode(),vix))
-        else:
-            outcomes.append({"source":"india_vix","status":"missing","reason":"No official VIX row returned for selected date."})
+        try:
+            session = src.requests.Session()
+            session.headers.update({"User-Agent":src.UA,"Referer":src.NIFTY_INDICES+"/reports/historical-data"})
+            vix = [r for r in src._vix_rows(session,trade_date,trade_date)
+                   if src._parse_date(r.get("date") or r.get("HistoricalDate")) == trade_date]
+            if vix:
+                outcomes.append(src._insert_source("vix_volatility","india_vix","NSE Indices — India VIX historical OHLC",
+                    src.NIFTY_INDICES+"/reports/historical-data","india_vix_"+trade_date.isoformat()+".json",
+                    trade_date,json.dumps(vix).encode(),vix))
+            else:
+                outcomes.append({"source":"india_vix","status":"missing","reason":"No official VIX row returned for selected date."})
+        except Exception as exc:
+            log.warning("India VIX source failed for %s; continuing other downloads: %s",trade_date,exc)
+            outcomes.append({"source":"india_vix","status":"missing","reason":str(exc)[:240]})
+    else:
+        outcomes.append({"source":"india_vix","status":"already_archived"});
 
     nse = src._session()
     ymd=trade_date.strftime("%Y%m%d"); dmy=trade_date.strftime("%d%m%Y")
