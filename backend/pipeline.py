@@ -1024,3 +1024,108 @@ def validate_cloud_datasets():
         conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
           ("cloud_semantic_validation","Cloud dataset semantic validation completed",json.dumps(result)))
     return result
+
+
+
+def _wilson_interval(wins, total, z=1.96):
+    if total <= 0:
+        return [None, None]
+    p=wins/total
+    denom=1+z*z/total
+    center=(p+z*z/(2*total))/denom
+    margin=z*((p*(1-p)/total+z*z/(4*total*total))**0.5)/denom
+    return [max(0.0,center-margin),min(1.0,center+margin)]
+
+
+def summarize_nifty_options():
+    """Build a historical EOD option-chain snapshot from archived NSE bhavcopy rows."""
+    with connect() as conn:
+        rows=conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='fo_bhavcopy' ORDER BY trade_date DESC LIMIT 10000").fetchall()
+        spot=conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='spot_ohlc' ORDER BY trade_date DESC LIMIT 20").fetchall()
+    if not rows:return {"status":"no_data","note":"No NIFTY F&O bhavcopy records have been archived yet."}
+    latest_date=max(r["trade_date"] for r in rows)
+    latest=[r["payload"] for r in rows if r["trade_date"]==latest_date]
+    spot_close=None
+    for item in spot:
+        value=_clean_number(_get(item["payload"],["CLOSE","Close","close"]))
+        if value and value>0:spot_close=value;break
+    contracts={}
+    for row in latest:
+        symbol=str(_get(row,["TckrSymb","Symbol","Ticker","Undrlyg"]) or "").upper()
+        opt=str(_get(row,["OptnTp","Option Type","OptionType"]) or "").upper()
+        expiry=_parse_date(_get(row,["XpryDt","Expiry Date","ExpiryDate"]))
+        strike=_clean_number(_get(row,["StrkPric","Strike Price","StrikePrice"]))
+        if symbol!="NIFTY" or opt not in ("CE","PE") or not expiry or strike is None:continue
+        contracts[(expiry,strike,opt)]={"close":_clean_number(_get(row,["ClsPric","Close","Close Price"])),
+          "oi":_clean_number(_get(row,["OpnIntrst","Open Interest","OpenInterest"])) or 0,
+          "change_oi":_clean_number(_get(row,["ChngInOpnIntrst","Change in OI","ChangeInOpenInterest"])) or 0,
+          "volume":_clean_number(_get(row,["TtlTradgVol","Total Traded Volume","Volume"])) or 0}
+    if not contracts:return {"status":"unmapped","trade_date":latest_date.isoformat(),"note":"Latest bhavcopy found, but option contract fields could not be mapped."}
+    expiry=min(k[0] for k in contracts)
+    by_strike={}
+    for (exp,strike,opt),item in contracts.items():
+        if exp==expiry:by_strike.setdefault(strike,{})[opt]=item
+    strikes=sorted(by_strike)
+    pains=[]
+    for settlement in strikes:
+        pain=sum(s.get("CE",{}).get("oi",0)*max(0,settlement-k)+s.get("PE",{}).get("oi",0)*max(0,k-settlement) for k,s in by_strike.items())
+        pains.append((pain,settlement))
+    ce_total=sum(s.get("CE",{}).get("oi",0) for s in by_strike.values())
+    pe_total=sum(s.get("PE",{}).get("oi",0) for s in by_strike.values())
+    ce_levels=[(s["CE"]["oi"],k) for k,s in by_strike.items() if "CE" in s]
+    pe_levels=[(s["PE"]["oi"],k) for k,s in by_strike.items() if "PE" in s]
+    chain=[]
+    for strike,sides in by_strike.items():
+        ce,pe=sides.get("CE",{}),sides.get("PE",{})
+        chain.append({"strike":strike,"ce_ltp":ce.get("close"),"ce_oi":ce.get("oi"),"ce_change_oi":ce.get("change_oi"),"ce_volume":ce.get("volume"),
+          "pe_ltp":pe.get("close"),"pe_oi":pe.get("oi"),"pe_change_oi":pe.get("change_oi"),"pe_volume":pe.get("volume")})
+    chain=sorted(sorted(chain,key=lambda x:abs(x["strike"]-spot_close))[:31],key=lambda x:x["strike"]) if spot_close else sorted(chain,key=lambda x:x["strike"])
+    return {"status":"available","trade_date":latest_date.isoformat(),"expiry":expiry.isoformat(),"spot_close":spot_close,
+      "max_pain":min(pains)[1] if pains else None,"put_call_oi_ratio":round(pe_total/ce_total,3) if ce_total else None,
+      "highest_put_oi_support":max(pe_levels)[1] if pe_levels else None,"highest_call_oi_resistance":max(ce_levels)[1] if ce_levels else None,
+      "ce_oi_total":ce_total,"pe_oi_total":pe_total,"contracts_mapped":sum(1 for k in contracts if k[0]==expiry),
+      "chain":chain,"note":"Historical end-of-day bhavcopy snapshot, not live option-chain data or an intraday signal."}
+
+
+def summarize_price_patterns():
+    """Calculate transparent daily candle-pattern counts and next-session outcomes."""
+    with connect() as conn:
+        rows=conn.execute("""SELECT trade_date,jsonb_agg(payload) AS payloads FROM dataset_records
+          WHERE dataset_key='spot_ohlc' GROUP BY trade_date ORDER BY trade_date ASC""").fetchall()
+    bars=[]
+    for record in rows:
+        valid=[]
+        for p in record["payloads"]:
+            vals=[_clean_number(_get(p,names)) for names in (["OPEN","Open","open"],["HIGH","High","high"],["LOW","Low","low"],["CLOSE","Close","close"])]
+            if None not in vals and min(vals)>0 and vals[1]>=max(vals[0],vals[3],vals[2]) and vals[2]<=min(vals[0],vals[3],vals[1]):valid.append(tuple(vals))
+        if len(set(valid))==1:
+            o,h,l,cl=valid[0];bars.append({"date":record["trade_date"],"open":o,"high":h,"low":l,"close":cl})
+    names=("bullish_engulfing","bearish_engulfing","hammer","shooting_star","inside_day","wide_range_day")
+    events={name:[] for name in names}
+    for i in range(1,len(bars)-1):
+        b,prev,nxt=bars[i],bars[i-1],bars[i+1]
+        body=abs(b["close"]-b["open"]);span=max(b["high"]-b["low"],1e-9)
+        upper=b["high"]-max(b["open"],b["close"]);lower=min(b["open"],b["close"])-b["low"]
+        signals=[]
+        if prev["close"]<prev["open"] and b["close"]>b["open"] and b["open"]<=prev["close"] and b["close"]>=prev["open"]:signals.append("bullish_engulfing")
+        if prev["close"]>prev["open"] and b["close"]<b["open"] and b["open"]>=prev["close"] and b["close"]<=prev["open"]:signals.append("bearish_engulfing")
+        if lower>=max(body*2,span*.45) and upper<=span*.2 and b["close"]>=b["open"]:signals.append("hammer")
+        if upper>=max(body*2,span*.45) and lower<=span*.2 and b["close"]<=b["open"]:signals.append("shooting_star")
+        if b["high"]<prev["high"] and b["low"]>prev["low"]:signals.append("inside_day")
+        if span>=(prev["high"]-prev["low"])*1.5:signals.append("wide_range_day")
+        for name in signals:
+            bullish=name in ("bullish_engulfing","hammer")
+            bearish=name in ("bearish_engulfing","shooting_star")
+            hit=nxt["close"]>b["close"] if bullish or not bearish else nxt["close"]<b["close"]
+            events[name].append({"date":b["date"],"hit":hit})
+    results=[]
+    for name,items in events.items():
+        wins=sum(1 for x in items if x["hit"]);total=len(items)
+        directional=name in ("bullish_engulfing","bearish_engulfing","hammer","shooting_star")
+        results.append({"pattern":name,"occurrences":total,"wins":wins,"win_rate":wins/total if total else None,
+          "metric_label":"directional_hit_rate" if directional else "next_session_up_rate",
+          "wilson_95_ci":_wilson_interval(wins,total),"latest_observed":items[-1]["date"].isoformat() if items else None})
+    return {"status":"available" if bars else "no_data","bars":len(bars),"first_date":bars[0]["date"].isoformat() if bars else None,
+      "last_date":bars[-1]["date"].isoformat() if bars else None,"patterns":results,
+      "note":"Descriptive historical daily-candle statistics. Engulfing/hammer/shooting-star use direction-specific hits; inside/wide-range show next-session up-rate. Not an intraday trading edge."}
+
