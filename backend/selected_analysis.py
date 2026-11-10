@@ -244,16 +244,14 @@ def selected_date_prepare_status(job_id: str):
 
 
 def _option_rows(trade_date: date, expiry: date):
+    """Build a complete expiry chain using the same UDiFF/legacy mapper as expiry discovery."""
     contracts={}
     for row in _rows("fo_bhavcopy",trade_date):
-        symbol=str(src._get(row,["TckrSymb","Symbol","Ticker","Undrlyg"]) or "").upper()
-        opt=str(src._get(row,["OptnTp","Option Type","OptionType"]) or "").upper()
-        exp=src._parse_date(src._get(row,["XpryDt","Expiry Date","ExpiryDate"]))
-        strike=src._clean_number(src._get(row,["StrkPric","Strike Price","StrikePrice"]))
-        if symbol!="NIFTY" or opt not in ("CE","PE") or exp!=expiry or strike is None:
+        symbol,opt,exp,strike=_nifty_option_identity(row)
+        if symbol!="NIFTY" or opt not in ("CE","PE") or exp!=expiry or strike is None or strike<=0:
             continue
         contracts.setdefault(strike,{})[opt]={
-          "close":src._clean_number(src._get(row,["ClsPric","Close","Close Price"])),
+          "close":src._clean_number(src._get(row,["ClsPric","Close","Close Price","Last Price"])),
           "oi":src._clean_number(src._get(row,["OpnIntrst","Open Interest","OpenInterest"])) or 0,
           "change_oi":src._clean_number(src._get(row,["ChngInOpnIntrst","Change in OI","ChangeInOpenInterest"])) or 0,
           "volume":src._clean_number(src._get(row,["TtlTradgVol","Total Traded Volume","Volume"])) or 0,
@@ -328,10 +326,10 @@ def analyse_selected_session(trade_date: date, expiry: date, download_if_missing
                     if src._clean_number(src._get(r,["CLOSE","Close","ClsPric","India VIX","VIX"])) is not None),None)
     fut_rows=[]
     for r in _rows("fo_bhavcopy",trade_date):
-        symbol=str(src._get(r,["TckrSymb","Symbol","Undrlyg"]) or "").upper()
-        typ=str(src._get(r,["FinInstrmTp","Instrument","InstType"]) or "").upper()
-        if symbol=="NIFTY" and "FUT" in typ:fut_rows.append(r)
-    future=next((r for r in fut_rows if src._parse_date(src._get(r,["XpryDt","Expiry Date"]))==expiry),None)
+        symbol=str(src._get(r,["TckrSymb","Symbol","Ticker","Undrlyg","Underlying"]) or "").strip().upper()
+        typ=str(src._get(r,["FinInstrmTp","SctySrs","Instrument","InstType"]) or "").strip().upper()
+        if symbol=="NIFTY" and ("FUT" in typ or typ in ("STF","IDF")):fut_rows.append(r)
+    future=next((r for r in fut_rows if src._parse_date(src._get(r,["XpryDt","FinInstrmActlXpryDt","Expiry Date"]))==expiry),None)
     future_close=src._clean_number(src._get(future or {},["ClsPric","Close","SttlmPric"]))
     volatility_agent={"status":"analysed" if vix_close is not None or future_close is not None else "missing_or_unmapped",
       "bias":"neutral","evidence":{"india_vix_close":vix_close,"nifty_future_close":future_close,
