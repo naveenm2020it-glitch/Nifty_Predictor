@@ -78,6 +78,23 @@ def init_db():
           details JSONB NOT NULL DEFAULT '{}'::jsonb,
           error TEXT
         );
+        CREATE TABLE IF NOT EXISTS source_downloads (
+          id BIGSERIAL PRIMARY KEY,
+          source_key TEXT NOT NULL,
+          dataset_key TEXT NOT NULL,
+          source_name TEXT NOT NULL,
+          source_url TEXT NOT NULL,
+          file_name TEXT NOT NULL,
+          report_date DATE NOT NULL,
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          sha256 TEXT NOT NULL,
+          byte_count BIGINT NOT NULL,
+          raw_bytes BYTEA NOT NULL,
+          status TEXT NOT NULL,
+          parsed_rows INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(source_key, report_date, sha256)
+        );
+        CREATE INDEX IF NOT EXISTS ix_source_downloads_date ON source_downloads(report_date DESC);
         CREATE TABLE IF NOT EXISTS daily_feature_snapshots (
           id BIGSERIAL PRIMARY KEY,
           trade_date DATE NOT NULL,
