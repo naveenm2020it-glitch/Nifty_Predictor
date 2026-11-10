@@ -344,7 +344,7 @@ def run_evening_ingestion():
         for key in ("OPEN", "HIGH", "LOW", "CLOSE"):
             if _clean_number(spot.get(key)) is None:
                 raise RuntimeError("NIFTY 50 OHLC row is incomplete; daily run stopped.")
-        outcomes.append(_insert_source("spot_ohlc", "nifty50_daily_ohlc", "NSE Indices — NIFTY 50 historical OHLC",
+        outcomes.append(_insert_source("spot_ohlc", "nifty50_daily_ohlc_5y", "NSE Indices — NIFTY 50 five-year historical OHLC",
             NIFTY_INDICES + "/reports/historical-data", "nifty50_" + trade_date.isoformat() + ".json",
             trade_date, json.dumps(spot_rows).encode(), spot_rows))
 
@@ -572,7 +572,7 @@ def _run_five_year_history(job_id, start_date, end_date):
         _history_job_update(job_id, total_dates=len(trade_dates), details={"phase":"downloading_index_history","spot_rows":len(valid_spot)})
         # Store the full official index history as one source import, with each row dated individually.
         spot_payload = [row for _, row in valid_spot]
-        if not _source_exists("nifty50_daily_ohlc", trade_dates[-1]):
+        if not _source_exists("nifty50_daily_ohlc_5y", trade_dates[-1]):
             _insert_source("spot_ohlc", "nifty50_daily_ohlc", "NSE Indices — NIFTY 50 historical OHLC",
                 NIFTY_INDICES + "/reports/historical-data", "nifty50_history_" + start_date.isoformat() + "_" + end_date.isoformat() + ".json",
                 trade_dates[-1], json.dumps(spot_payload).encode(), spot_payload)
