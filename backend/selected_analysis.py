@@ -54,14 +54,31 @@ def available_dates(limit: int = 500):
             "note":"Only dates with stored NIFTY spot records are listed. Select a missing valid session to request an official-source download."}
 
 
+def _nifty_option_identity(row):
+    """Read NIFTY option identity across NSE UDiFF and legacy bhavcopy headers."""
+    symbol = str(src._get(row,[
+        "TckrSymb","Symbol","Ticker","Undrlyg","Underlying","Underlying Symbol"
+    ]) or "").strip().upper()
+    option_type = str(src._get(row,[
+        "OptnTp","Option Type","OptionType","Option Type (CE/PE)"
+    ]) or "").strip().upper()
+    expiry_value = src._get(row,[
+        "XpryDt","FinInstrmActlXpryDt","FinInstrmActlXpryDt",
+        "Expiry Date","ExpiryDate","Actual Expiry Date"
+    ])
+    expiry = src._parse_date(expiry_value)
+    strike = src._clean_number(src._get(row,[
+        "StrkPric","Strike Price","StrikePrice"
+    ]))
+    return symbol, option_type, expiry, strike
+
+
 def expiries_for_date(trade_date: date):
     contracts = _rows("fo_bhavcopy", trade_date)
     found = set()
     for row in contracts:
-        symbol = str(src._get(row,["TckrSymb","Symbol","Ticker","Undrlyg"]) or "").upper()
-        opt = str(src._get(row,["OptnTp","Option Type","OptionType"]) or "").upper()
-        expiry = src._parse_date(src._get(row,["XpryDt","Expiry Date","ExpiryDate"]))
-        if symbol == "NIFTY" and opt in ("CE","PE") and expiry:
+        symbol, option_type, expiry, strike = _nifty_option_identity(row)
+        if symbol == "NIFTY" and option_type in ("CE","PE") and expiry and strike is not None and strike > 0:
             found.add(expiry)
     return sorted(found)
 
@@ -130,15 +147,38 @@ def _download_selected(trade_date: date):
        "FOVOLT_"+dmy+".csv",["content/fo/FOVOLT_"+dmy+".csv"],"csv"),
     ]
     for dataset_key,source_key,report_name,filename,paths,kind in tasks:
-        if src._source_exists(source_key,trade_date):
-            outcomes.append({"source":source_key,"status":"already_archived"})
+        # A source_downloads row alone is not proof that parsed dataset_records
+        # still exist. Retry the download if the selected-date payload is absent.
+        if src._source_exists(source_key,trade_date) and _rows(dataset_key,trade_date):
+            outcomes.append({"source":source_key,"status":"already_archived","rows":len(_rows(dataset_key,trade_date))})
             continue
         try:
             raw,url=src._download_nse(nse,trade_date,report_name,paths,timeout=(6,18))
             if kind=="zip":
                 rows=src._csv_rows(raw,zipped=True)
-                rows=[r for r in rows if str(src._get(r,["TckrSymb","Symbol","Ticker","Undrlyg"]) or "").upper()=="NIFTY"]
-                if not rows: raise ValueError("Bhavcopy has no NIFTY contracts.")
+                all_rows=rows
+                rows=[]
+                for row in all_rows:
+                    symbol, option_type, expiry, strike = _nifty_option_identity(row)
+                    if symbol == "NIFTY":
+                        rows.append(row)
+                if not rows:
+                    sample_headers=list(all_rows[0].keys())[:35] if all_rows else []
+                    sample_symbols=sorted({
+                        str(src._get(x,["TckrSymb","Symbol","Ticker","Undrlyg","Underlying"]) or "")[:40]
+                        for x in all_rows[:500]
+                    })[:12]
+                    raise ValueError(
+                        "UDiFF bhavcopy parsed but no NIFTY underlying rows were recognised. "
+                        f"Rows={len(all_rows)}; headers={sample_headers}; sample_symbols={sample_symbols}"
+                    )
+                option_rows=[row for row in rows if _nifty_option_identity(row)[1] in ("CE","PE")]
+                if not option_rows:
+                    sample_headers=list(rows[0].keys())[:35]
+                    raise ValueError(
+                        "NIFTY rows found but CE/PE option-type column was not recognised. "
+                        f"Rows={len(rows)}; headers={sample_headers}"
+                    )
             elif kind=="participant":
                 rows=[dict(r,_trade_date=trade_date.isoformat()) for r in src._participant_rows(raw)]
             elif kind=="xls":
@@ -162,10 +202,20 @@ def _prepare_worker(job_id: str, trade_date: date):
         conn.execute("UPDATE selected_analysis_jobs SET status='running',updated_at=NOW() WHERE id=%s",(job_id,))
     try:
         sources=_download_selected(trade_date)
+        contracts=_rows("fo_bhavcopy",trade_date)
         expiries=[x.isoformat() for x in expiries_for_date(trade_date)]
-        status="completed" if expiries else "completed_no_expiry"
+        fo_status=next((x for x in sources if x.get("source")=="fo_bhavcopy"),{})
+        if expiries:
+            status="completed"
+            message="NIFTY option contracts were validated. Select an expiry."
+        elif not contracts:
+            status="completed_no_expiry"
+            message="NSE F&O bhavcopy is unavailable or was not archived as parsed rows. Check the F&O source status before retrying."
+        else:
+            status="completed_no_expiry"
+            message="Bhavcopy rows were archived, but no verified NIFTY CE/PE contracts with valid expiry and strike were found."
         result={"trade_date":trade_date.isoformat(),"expiries":expiries,"sources":sources,
-                "message":"Required date-specific NSE reports were checked/downloaded. Select a verified expiry." if expiries else "No mapped NIFTY option expiry was found in the selected-date bhavcopy."}
+                "fo_rows_archived":len(contracts),"fo_source_status":fo_status,"message":message}
         with connect() as conn:
             conn.execute("UPDATE selected_analysis_jobs SET status=%s,result=%s,updated_at=NOW(),finished_at=NOW() WHERE id=%s",
                          (status,json.dumps(result,default=str),job_id))
