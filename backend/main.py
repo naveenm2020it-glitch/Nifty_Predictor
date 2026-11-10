@@ -102,9 +102,9 @@ def list_datasets():
 @app.get("/api/v1/sources")
 def sources():
     return {"items": [
-        {"key":"nifty50_index_history","name":"NSE Indices — Historical Index Data","url":"https://www.niftyindices.com/reports/historical-data","status":"catalogued_not_connected","datasets":["NIFTY 50 daily OHLC (CSV)"]},
+        {"key":"nifty50_index_history","name":"NSE Indices — Historical Index Data","url":"https://www.niftyindices.com/reports/historical-data","status":"integration_implemented_live_test_pending","datasets":["NIFTY 50 daily OHLC (CSV)","India VIX historical OHLC"]},
         {"key":"nse_equity_reports","name":"NSE India — Equity reports","url":"https://www.nseindia.com/all-reports","status":"catalogued_not_connected","datasets":["CM-UDiFF Common Bhavcopy Final","Full Bhavcopy and Security Deliverable data"]},
-        {"key":"nse_derivatives_reports","name":"NSE India — Derivatives reports","url":"https://www.nseindia.com/all-reports-derivatives","status":"catalogued_not_connected","datasets":["F&O-UDiFF Common Bhavcopy Final","Participant wise Open Interest","FII derivatives statistics","Daily Settlement Prices","Daily Volatility"]}
+        {"key":"nse_derivatives_reports","name":"NSE India — Derivatives reports","url":"https://www.nseindia.com/all-reports-derivatives","status":"integration_implemented_live_test_pending","datasets":["F&O-UDiFF Common Bhavcopy Final","Participant wise Open Interest","FII derivatives statistics","Daily Settlement Prices","Daily Volatility"]}
     ]}
 
 def parse_trade_date(value):
