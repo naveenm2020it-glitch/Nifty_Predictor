@@ -37,7 +37,8 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
  const [busy,setBusy]=useState(false);
  const [status,setStatus]=useState("Choose a completed NIFTY trading date.");
  const [error,setError]=useState("");
- const [report,setReport]=useState<any>(null);\n const [sourceOutcomes,setSourceOutcomes]=useState<any[]>([]);
+ const [report,setReport]=useState<any>(null);
+ const [sourceOutcomes,setSourceOutcomes]=useState<any[]>([]);
  useEffect(()=>{fetch(apiBase+"/api/v1/analysis/dates").then(r=>r.json()).then(x=>{const ds=x.dates||[];setAvailableDates(ds);if(ds.length)setTradeDate(ds[0]);}).catch(()=>setError("Could not load available NIFTY dates."));},[apiBase]);
  const runAnalysis=async(selectedExpiry:string)=>{
   const response=await fetch(apiBase+"/api/v1/analysis/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade_date:tradeDate,expiry:selectedExpiry||undefined})});
@@ -82,7 +83,8 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
   </div>
   <div className="selected-analysis-status">{status}</div>
   {error&&<div className="vault-error">{error}</div>}
-  {sourceOutcomes.length>0&&<details className="selected-source-details"><summary>Files checked for this date ({sourceOutcomes.length})</summary><pre>{JSON.stringify(sourceOutcomes,null,2)}</pre></details>}\n  {report&&<div className="selected-analysis-result">
+  {sourceOutcomes.length>0&&<details className="selected-source-details"><summary>Files checked for this date ({sourceOutcomes.length})</summary><pre>{JSON.stringify(sourceOutcomes,null,2)}</pre></details>}
+  {report&&<div className="selected-analysis-result">
    <div className="selected-consensus"><div><small>Combined agent conclusion</small><b>{String(report.coordinator?.bias||"range_or_wait").replace(/_/g," ").toUpperCase()}</b><span>Market date {report.trade_date} · Expiry {report.expiry} · NIFTY close {report.spot_close?.toLocaleString?.("en-IN")??"Unavailable"} · ATM {report.atm_strike??"—"}</span></div><p>{report.coordinator?.consensus_note}</p></div>
    <div className="selected-agent-grid">{Object.entries(report.agents||{}).map(([key,value]:any)=><div className="selected-agent" key={key}><b>{key.replace(/_/g," ")}</b><span className={value.status==="analysed"?"agent-ok":"agent-missing"}>{value.status}</span><strong>{value.bias||"unavailable"}</strong><small>{value.note||"Independent dataset analysis."}</small><details><summary>View evidence</summary><pre>{JSON.stringify(value.evidence||{},null,2)}</pre></details></div>)}</div>
    <div className="selected-chain"><b>Complete selected-expiry option chain</b><small>{report.agents?.options_expiry?.chain?.length||0} strikes · historical closing prices from NSE bhavcopy</small><div className="table-scroll"><table><thead><tr>{["Strike","CE Close","CE OI","CE ΔOI","CE Volume","PE Close","PE OI","PE ΔOI","PE Volume"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{(report.agents?.options_expiry?.chain||[]).map((x:any)=><tr key={x.strike}><td>{x.strike}</td><td>{x.ce_ltp??"—"}</td><td>{x.ce_oi??"—"}</td><td>{x.ce_change_oi??"—"}</td><td>{x.ce_volume??"—"}</td><td>{x.pe_ltp??"—"}</td><td>{x.pe_oi??"—"}</td><td>{x.pe_change_oi??"—"}</td><td>{x.pe_volume??"—"}</td></tr>)}</tbody></table></div></div>
