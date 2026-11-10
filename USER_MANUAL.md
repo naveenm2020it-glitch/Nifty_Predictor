@@ -225,12 +225,12 @@ Use the application as a research and data-validation workspace until the source
 On an NSE holiday, the report uses the latest successfully stored completed trading session as its input date and assigns the report to the next configured NSE trading session. The current calendar includes NSE 2026 equity holidays and the 8-Nov-2026 Muhurat special session. Update `backend/market_calendar.py` from the official NSE annual holiday circular each year. A calendar does not guarantee that source files have downloaded; always check source status and input cutoff date.
 
 
-### Select a market date and expiry
-1. Open **NSE Data Centre** and find **Selected-date NIFTY analysis**.
-2. Select a completed NSE market date. On a holiday, choose the most recent completed trading session rather than the holiday date.
-3. Click **Load date & find expiries**. The backend checks the official sources and downloads any missing date-specific files. Expiry choices appear only when mapped NIFTY CE/PE contracts are available.
-4. Select the required expiry. Set how many strikes below/above ATM to include (default 7 each).
-5. Click **Load & Analyse**. Independent agents analyse price structure, selected-expiry options, participant/FII positioning, futures/volatility and candle patterns. A coordinator combines only agents with usable mapped data.
-6. Review each agent's evidence, the selected strike window, downloaded-source statuses and the combined conclusion.
+### One-click selected-date NIFTY analysis
+1. Open **NSE Data Centre** and select a completed NSE market date.
+2. Click **Load & Analyse** once. The backend checks/downloads the date-specific NSE reports, stores validated rows, detects available NIFTY expiries and runs the independent research agents.
+3. If exactly one expiry is found, it is selected automatically and analysis starts.
+4. If multiple expiries are found, select the required expiry from the dropdown and click **Analyse selected expiry**.
+5. Review the combined conclusion and source-quality status. Results are also shown in **Next-day prediction**, **Options intelligence**, **FII & participant flow**, **Futures & volatility**, and **Pattern intelligence**.
+6. The complete selected-expiry option chain is shown; there are no ITM/OTM strike-count controls.
 
-**Data honesty:** If an official NSE source blocks the Render cloud IP, the app shows the source as missing and does not invent values. Option premiums are EOD closing prices, not live entry quotes. The CE/PE trade plan remains skipped without a reliable live option feed. This analysis is historical research, not a guaranteed forecast.
+**Data integrity:** If NSE blocks Render's cloud request or a report is unavailable, the app reports the source as missing. Historical option premiums are EOD closing prices, not live entry quotes. The system does not invent executable CE/PE entries.
