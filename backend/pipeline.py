@@ -416,14 +416,35 @@ def run_evening_ingestion():
                 log.exception("Source %s failed", source_key)
                 outcomes.append({"source": source_key, "status": "missing", "error": str(exc)[:260]})
         feature_result = _store_feature_rows()
-        forecast_result = generate_next_session_prediction()
+        training_result = {"status": "not_due"}
+        forecast_result = {"status": "blocked_stale_or_missing_features"}
+        feature_is_current = feature_result.get("status") == "stored" and feature_result.get("trade_date") == trade_date.isoformat()
+        if feature_is_current:
+            with connect() as conn:
+                feature_count = conn.execute(
+                    "SELECT COUNT(*) AS count FROM daily_feature_snapshots WHERE feature_schema_version=%s",
+                    (FEATURE_SCHEMA,)
+                ).fetchone()["count"]
+                latest_model = conn.execute(
+                    "SELECT training_completed_at FROM model_versions WHERE status='validated' ORDER BY created_at DESC LIMIT 1"
+                ).fetchone()
+            retrain_due = latest_model is None or (
+                latest_model["training_completed_at"] is not None and
+                (datetime.now(IST) - latest_model["training_completed_at"].replace(tzinfo=IST)).days >= 30
+            )
+            if int(feature_count or 0) >= 301 and retrain_due:
+                try:
+                    training_result = train_walk_forward_model()
+                except Exception as exc:
+                    training_result = {"status": "failed", "error": str(exc)[:240]}
+            forecast_result = generate_next_session_prediction()
         required = {"nifty50_daily_ohlc_5y", "india_vix", "fo_bhavcopy", "participant_oi", "fii_derivatives", "fo_settlement", "fo_volatility"}
         good = {x.get("source") for x in outcomes if x.get("status") in ("downloaded", "already_archived")}
         complete = required.issubset(good)
         result = {"trade_date": trade_date.isoformat(), "complete_source_set": complete,
-                  "sources": outcomes, "features": feature_result, "forecast": forecast_result,
+                  "sources": outcomes, "features": feature_result, "model_training": training_result, "forecast": forecast_result,
                   "prediction_status": forecast_result.get("status", "not_generated"),
-                  "note": "Downloads are archived with provenance. Model inference remains disabled until semantic validation and walk-forward model approval."}
+                  "note": "Daily features update only after a current NIFTY session row is archived. A validated model is retrained at most every 30 days when at least 301 feature snapshots exist; forecasts are blocked if the latest feature date is stale."}
         with connect() as conn:
             conn.execute("""
               UPDATE ingestion_runs SET status=%s,finished_at=NOW(),details=%s
