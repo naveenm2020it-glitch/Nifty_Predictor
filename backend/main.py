@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from .db import connect, init_db
 from .pipeline import backfill_historical_features, generate_daily_evidence_report, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, summarize_nifty_options, summarize_price_patterns, train_walk_forward_model, validate_cloud_datasets
 from .storage import save_temporary_file, temporary_storage_status
-from .selected_analysis import analyse_selected_session, available_dates, expiries_for_date, _download_selected
+from .selected_analysis import analyse_selected_session, available_dates, expiries_for_date, start_selected_date_prepare, selected_date_prepare_status
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -44,6 +44,7 @@ def startup():
               error=COALESCE(error, 'API process restarted; start the download again to continue missing dates.')
           WHERE status IN ('queued','running')
         """)
+        conn.execute("UPDATE selected_analysis_jobs SET status='interrupted',updated_at=NOW(),error='API process restarted; select the date and start preparation again.' WHERE status IN ('queued','running')")
 
 @app.get("/")
 def root():
@@ -502,13 +503,19 @@ def prepare_selected_analysis(payload: dict):
     if not is_nse_trading_session(selected_date):
         raise HTTPException(status_code=422, detail="Selected date is not an NSE trading session.")
     try:
-        sources = _download_selected(selected_date)
-        expiries = [x.isoformat() for x in expiries_for_date(selected_date)]
-        return {"status":"prepared" if expiries else "missing_expiry_data",
-                "trade_date":selected_date.isoformat(),"expiries":expiries,"sources":sources,
-                "message":"Required date-specific NSE reports were checked/downloaded. Select one of the verified expiries." if expiries else "NSE files did not provide a mapped NIFTY option expiry for this date."}
+        return start_selected_date_prepare(selected_date)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Selected-date NSE data preparation failed: "+str(exc)[:300])
+        raise HTTPException(status_code=503, detail="Could not start selected-date download: "+str(exc)[:250])
+
+
+@app.get("/api/v1/analysis/prepare/{job_id}")
+def selected_analysis_prepare_status(job_id: str):
+    try:
+        return selected_date_prepare_status(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Selected-date job status unavailable: "+str(exc)[:220])
 
 
 @app.post("/api/v1/analysis/run")
