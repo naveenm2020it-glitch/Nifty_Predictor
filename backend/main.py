@@ -365,10 +365,10 @@ def pipeline_readiness():
     if spot and spot["first_date"] and spot["last_date"]:
         span_years = (spot["last_date"] - spot["first_date"]).days / 365.25
     missing = sorted(DATASET_KEYS - set(by_key))
-    historical_ready = not missing and span_years >= 4.8
+    historical_ready = not missing and span_years >= 4.8 and int(spot["dates"] if spot else 0) >= 1000
     return {
         "datasets": [dict(r) for r in coverage], "missing_datasets": missing,
-        "spot_history_years": round(span_years, 2), "historical_ingestion_ready": historical_ready,
+        "spot_history_years": round(span_years, 2), "spot_trading_dates": int(spot["dates"] if spot else 0), "required_spot_trading_dates": 1000, "historical_ingestion_ready": historical_ready,
         "semantic_validation": "pending", "feature_engineering": "pending",
         "walk_forward_validation": "pending", "validated_models": model_count,
         "prediction_pipeline": "blocked_until_validation_passes",
