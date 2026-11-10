@@ -78,6 +78,18 @@ def init_db():
           details JSONB NOT NULL DEFAULT '{}'::jsonb,
           error TEXT
         );
+        CREATE TABLE IF NOT EXISTS daily_feature_snapshots (
+          id BIGSERIAL PRIMARY KEY,
+          trade_date DATE NOT NULL,
+          feature_schema_version TEXT NOT NULL,
+          input_cutoff DATE NOT NULL,
+          source_fingerprint TEXT NOT NULL,
+          features JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(trade_date, feature_schema_version)
+        );
+        CREATE INDEX IF NOT EXISTS ix_daily_features_date ON daily_feature_snapshots(trade_date DESC);
+
         CREATE TABLE IF NOT EXISTS model_versions (
           id BIGSERIAL PRIMARY KEY,
           model_name TEXT NOT NULL,
