@@ -146,8 +146,13 @@ def _csv_rows(raw, zipped=False):
 def _participant_rows(raw):
     text = raw.decode("utf-8-sig", errors="replace")
     lines = [line for line in text.splitlines() if line.strip()]
-    header_index = next((i for i, line in enumerate(lines[:12])
-                         if any(token in line.lower() for token in ("client type", "participant", "future index long"))), None)
+    header_index = next((i for i, line in enumerate(lines[:20])
+                         if "client type" in line.lower()
+                         and any(token in line.lower() for token in (
+                             "future index long", "future index short",
+                             "option index call long", "option index put long",
+                             "future stock long", "future stock short"
+                         ))), None)
     if header_index is None:
         header_index = 1 if len(lines) > 1 else 0
     reader = csv.DictReader(io.StringIO("\n".join(lines[header_index:])))
