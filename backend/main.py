@@ -431,6 +431,7 @@ def research_summary():
     return {
       "spot_trading_dates": int(spot_count or 0), "feature_snapshots": int(feature_count or 0),
       "latest_feature_date": latest_feature["trade_date"].isoformat() if latest_feature else None,
+      "latest_spot_close": latest_feature["features"].get("close") if latest_feature else None,
       "latest_model": dict(latest_model) if latest_model else None,
       "latest_prediction": dict(latest_prediction) if latest_prediction else None,
       "training_available": int(feature_count or 0) >= 301,
