@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from .db import connect, init_db
 from .pipeline import backfill_historical_features, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, train_walk_forward_model
@@ -442,6 +443,111 @@ def latest_prediction():
           WHERE p.status='published' ORDER BY p.session_date DESC LIMIT 1
         """).fetchone()
     return {"item": dict(row) if row else None}
+
+
+def _latest_report_payload():
+    with connect() as conn:
+        row=conn.execute("""SELECT p.id,p.session_date,p.generated_at,p.input_cutoff,p.data_quality,p.scenarios,p.status,
+          m.model_name,m.version,m.validation_metrics,m.status AS model_status
+          FROM predictions p LEFT JOIN model_versions m ON m.id=p.model_version_id
+          WHERE p.status='published' ORDER BY p.generated_at DESC LIMIT 1""").fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="No published research forecast is available to export.")
+    return dict(row)
+
+
+@app.get("/api/v1/reports/latest.xlsx")
+def export_latest_excel():
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    report=_latest_report_payload()
+    scenarios=report["scenarios"]
+    wb=Workbook()
+    ws=wb.active; ws.title="Next-day research"
+    rows=[
+      ["NIFTY IQ — Next-session research report"],
+      ["Session date (weekday estimate)",report["session_date"].isoformat()],
+      ["Input cutoff",report["input_cutoff"].isoformat() if report["input_cutoff"] else ""],
+      ["Generated at",report["generated_at"].isoformat()],
+      ["Model",report.get("version") or ""],
+      ["Model status",report.get("model_status") or ""],
+      ["Research bias",scenarios.get("bias","")],
+      ["Model up score",scenarios.get("probability_up","")],
+      ["Model down score",scenarios.get("probability_down","")],
+      ["Reference close",scenarios.get("reference_close","")],
+      ["ATR14",scenarios.get("atr14","")],
+      ["Bullish trigger reference",scenarios.get("bullish",{}).get("trigger_reference","")],
+      ["Bullish target zone",str(scenarios.get("bullish",{}).get("target_zone",""))],
+      ["Bullish invalidation",scenarios.get("bullish",{}).get("invalidation","")],
+      ["Bearish trigger reference",scenarios.get("bearish",{}).get("trigger_reference","")],
+      ["Bearish target zone",str(scenarios.get("bearish",{}).get("target_zone",""))],
+      ["Bearish invalidation",scenarios.get("bearish",{}).get("invalidation","")],
+      ["Range lower reference",scenarios.get("range",{}).get("lower_reference","")],
+      ["Range upper reference",scenarios.get("range",{}).get("upper_reference","")],
+      ["Important limitation",scenarios.get("warning","")],
+    ]
+    for row in rows: ws.append(row)
+    ws.column_dimensions["A"].width=34; ws.column_dimensions["B"].width=100
+    ws.freeze_panes="A2"
+    for cell in ws[1]:
+        cell.font=Font(bold=True,color="FFFFFF",size=14)
+        cell.fill=PatternFill("solid",fgColor="243B53")
+    for row in ws.iter_rows(min_row=2):
+        row[0].font=Font(bold=True)
+        row[1].alignment=__import__("openpyxl").styles.Alignment(wrap_text=True,vertical="top")
+    metrics=report.get("validation_metrics") or {}
+    ms=wb.create_sheet("Walk-forward metrics")
+    ms.append(["Metric","Value"])
+    for key,value in metrics.items():
+        if key!="folds": ms.append([key,json.dumps(value) if isinstance(value,(dict,list)) else value])
+    fs=wb.create_sheet("Fold results"); fs.append(["Fold","Train samples","Test samples","Test start","Test end","Accuracy","Balanced accuracy","Brier score"])
+    for fold in metrics.get("folds",[]):
+        fs.append([fold.get("fold"),fold.get("train_samples"),fold.get("test_samples"),fold.get("test_start"),fold.get("test_end"),fold.get("accuracy"),fold.get("balanced_accuracy"),fold.get("brier_score")])
+    out=BytesIO(); wb.save(out); out.seek(0)
+    return StreamingResponse(out,media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      headers={"Content-Disposition":'attachment; filename="NIFTY_IQ_Next_Day_Research.xlsx"'})
+
+
+@app.get("/api/v1/reports/latest.pdf")
+def export_latest_pdf():
+    from io import BytesIO
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    report=_latest_report_payload(); s=report["scenarios"]; metrics=report.get("validation_metrics") or {}
+    out=BytesIO(); doc=SimpleDocTemplate(out,pagesize=A4,rightMargin=18*mm,leftMargin=18*mm,topMargin=16*mm,bottomMargin=16*mm)
+    styles=getSampleStyleSheet(); styles.add(ParagraphStyle(name="SmallNote",parent=styles["BodyText"],fontSize=8,leading=11,textColor=colors.HexColor("#52616b")))
+    story=[Paragraph("NIFTY IQ — Next-session research report",styles["Title"]),
+      Paragraph("Research output only · No order execution",styles["SmallNote"]),Spacer(1,8)]
+    summary=[["Session date (weekday estimate)",report["session_date"].isoformat()],
+      ["Input cutoff",report["input_cutoff"].isoformat() if report["input_cutoff"] else "—"],
+      ["Generated",report["generated_at"].isoformat()],
+      ["Model",report.get("version") or "—"],["Model status",report.get("model_status") or "—"],
+      ["Research bias",s.get("bias","—")],["Model up score",str(s.get("probability_up","—"))],
+      ["Model down score",str(s.get("probability_down","—"))],["Reference close",str(s.get("reference_close","—"))],
+      ["ATR14",str(s.get("atr14","—"))]]
+    t=Table(summary,colWidths=[55*mm,115*mm]); t.setStyle(TableStyle([
+      ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#eaf0f6")),("GRID",(0,0),(-1,-1),.35,colors.HexColor("#cbd5e1")),
+      ("FONTNAME",(0,0),(0,-1),"Helvetica-Bold"),("FONTSIZE",(0,0),(-1,-1),8),("VALIGN",(0,0),(-1,-1),"TOP"),("PADDING",(0,0),(-1,-1),6)]))
+    story += [t,Spacer(1,12),Paragraph("Conditional scenarios",styles["Heading2"])]
+    scenario_rows=[["Path","Trigger reference","Target zone","Invalidation / boundary"],
+      ["Bullish",str(s.get("bullish",{}).get("trigger_reference","—")),str(s.get("bullish",{}).get("target_zone","—")),str(s.get("bullish",{}).get("invalidation","—"))],
+      ["Bearish",str(s.get("bearish",{}).get("trigger_reference","—")),str(s.get("bearish",{}).get("target_zone","—")),str(s.get("bearish",{}).get("invalidation","—"))],
+      ["Range", "—","—",str([s.get("range",{}).get("lower_reference"),s.get("range",{}).get("upper_reference")])]]
+    st=Table(scenario_rows,colWidths=[25*mm,38*mm,48*mm,59*mm]); st.setStyle(TableStyle([
+      ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#243b53")),("TEXTCOLOR",(0,0),(-1,0),colors.white),
+      ("GRID",(0,0),(-1,-1),.35,colors.HexColor("#cbd5e1")),("FONTSIZE",(0,0),(-1,-1),7),("PADDING",(0,0),(-1,-1),5)]))
+    story += [st,Spacer(1,12),Paragraph("Walk-forward evaluation",styles["Heading2"])]
+    for key in ("out_of_sample_samples","accuracy","balanced_accuracy","precision_up","recall_up","brier_score","majority_baseline_accuracy","beats_majority_baseline"):
+        if key in metrics: story.append(Paragraph(key.replace("_"," ").title()+": "+str(metrics[key]),styles["BodyText"]))
+    story += [Spacer(1,10),Paragraph(s.get("warning","Research only."),styles["SmallNote"])]
+    doc.build(story); out.seek(0)
+    return StreamingResponse(out,media_type="application/pdf",
+      headers={"Content-Disposition":'attachment; filename="NIFTY_IQ_Next_Day_Research.pdf"'})
+
 
 @app.get("/api/v1/audit")
 def audit():
