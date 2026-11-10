@@ -1,26 +1,30 @@
 import csv
 import hashlib
+import hmac
 import io
 import json
 import os
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import connect, init_db
 
+DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
+MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+
 app = FastAPI(
     title="NIFTY IQ Data API",
-    version="0.2.0",
-    description="Integrity-first data registry and import API for the NIFTY next-day research system."
+    version="0.3.0",
+    description="Provenance-aware incremental data archive and model registry for NIFTY research."
 )
 
-allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+allowed_origins = [x.strip() for x in os.getenv("ALLOWED_ORIGINS", "*").split(",") if x.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=allowed_origins or ["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -39,7 +43,7 @@ def health():
     try:
         with connect() as conn:
             conn.execute("SELECT 1")
-        return {"status": "ok", "database": "connected", "timestamp": datetime.utcnow().isoformat() + "Z"}
+        return {"status": "ok", "database": "connected", "persistence": "external_postgresql"}
     except Exception as exc:
         raise HTTPException(status_code=503, detail={"status": "degraded", "database": "unavailable", "reason": str(exc)[:180]})
 
@@ -47,18 +51,20 @@ def health():
 def system_status():
     try:
         with connect() as conn:
-            datasets = conn.execute("SELECT COUNT(*) AS count, COALESCE(SUM(accepted_rows),0) AS rows FROM datasets").fetchone()
-            latest = conn.execute("SELECT MAX(imported_at) AS latest FROM datasets").fetchone()
+            imports = conn.execute("SELECT COUNT(*) AS count, COALESCE(SUM(accepted_rows),0) AS rows, MAX(imported_at) AS latest FROM dataset_imports").fetchone()
+            records = conn.execute("SELECT COUNT(*) AS count FROM dataset_records").fetchone()
+            models = conn.execute("SELECT COUNT(*) AS count FROM model_versions WHERE status = 'validated'").fetchone()
+            forecasts = conn.execute("SELECT COUNT(*) AS count, MAX(generated_at) AS latest FROM predictions WHERE status = 'published'").fetchone()
         return {
-            "api": "available",
-            "database": "connected",
-            "datasets_registered": datasets["count"],
-            "validated_rows": datasets["rows"],
-            "last_import_at": latest["latest"].isoformat() if latest["latest"] else None,
-            "market_data": "awaiting_verified_import",
-            "models": "not_trained",
-            "forecast": "not_calculated",
-            "report_pipeline": "not_configured"
+            "api": "available", "database": "connected", "storage": "configured_database_url",
+            "dataset_files": imports["count"], "accepted_source_rows": imports["rows"],
+            "deduplicated_records": records["count"], "last_import_at": imports["latest"].isoformat() if imports["latest"] else None,
+            "validated_models": models["count"], "published_predictions": forecasts["count"],
+            "last_prediction_at": forecasts["latest"].isoformat() if forecasts["latest"] else None,
+            "market_data": "awaiting_verified_source_ingestion" if not records["count"] else "archived_pending_semantic_validation",
+            "models": "not_trained" if not models["count"] else "validated_model_available",
+            "forecast": "not_calculated" if not forecasts["count"] else "published_forecast_available",
+            "evening_scheduler": "not_configured"
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Database unavailable: {str(exc)[:160]}")
@@ -70,9 +76,14 @@ def list_datasets():
           SELECT id, dataset_key, source_name, source_url, file_name, imported_at,
                  first_date, last_date, row_count, accepted_rows, rejected_rows,
                  status, sha256, notes
-          FROM datasets ORDER BY imported_at DESC LIMIT 200
+          FROM dataset_imports ORDER BY imported_at DESC LIMIT 200
         """).fetchall()
-    return {"items": [dict(r) for r in rows]}
+        counts = conn.execute("""
+          SELECT dataset_key, COUNT(*) AS rows, COUNT(DISTINCT trade_date) AS dates,
+                 MIN(trade_date) AS first_date, MAX(trade_date) AS last_date
+          FROM dataset_records GROUP BY dataset_key
+        """).fetchall()
+    return {"items": [dict(r) for r in rows], "coverage": [dict(r) for r in counts]}
 
 @app.get("/api/v1/sources")
 def sources():
@@ -81,96 +92,171 @@ def sources():
         {"key":"nse_derivatives_reports","name":"NSE India — Derivatives reports","url":"https://www.nseindia.com/all-reports-derivatives","status":"catalogued_not_connected","datasets":["F&O-UDiFF Common Bhavcopy Final","Participant wise Open Interest","FII derivatives statistics","Daily Settlement Prices","Daily Volatility"]}
     ]}
 
-@app.post("/api/v1/datasets/import-csv")
-async def import_csv(
+def parse_trade_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    raw = raw[:10]
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d-%b-%Y", "%Y%m%d", "%d %b %Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+def normalized_key(value):
+    return "".join(ch.lower() for ch in str(value or "") if ch.isalnum())
+
+def find_value(row, candidates):
+    by_norm = {normalized_key(k): v for k, v in row.items() if k is not None}
+    for candidate in candidates:
+        value = by_norm.get(normalized_key(candidate))
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
+
+@app.post("/api/v1/datasets/import")
+async def import_dataset(
     file: UploadFile = File(...),
-    dataset_key: str = Form("nifty_ohlc"),
-    source_name: str = Form(...),
+    dataset_key: str = Form(...),
+    source_name: str = Form("User-selected local dataset"),
     source_url: Optional[str] = Form(None),
-    notes: Optional[str] = Form(None)
+    notes: Optional[str] = Form(None),
+    ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")
 ):
+    expected = os.getenv("INGEST_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Cloud import is disabled until INGEST_API_TOKEN is configured on the API service.")
+    if not ingest_token or not hmac.compare_digest(ingest_token, expected):
+        raise HTTPException(status_code=401, detail="Cloud import token is missing or invalid.")
+    if dataset_key not in DATASET_KEYS:
+        raise HTTPException(status_code=422, detail="Unknown dataset_key.")
     if not file.filename or not file.filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=415, detail="Upload a CSV file.")
+        raise HTTPException(status_code=415, detail="Upload a CSV file. Excel files are converted in the browser before upload.")
     raw = await file.read()
-    if len(raw) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Maximum CSV size is 20 MB.")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Maximum upload size is 30 MB.")
     digest = hashlib.sha256(raw).hexdigest()
     try:
         text = raw.decode("utf-8-sig")
         reader = csv.DictReader(io.StringIO(text))
         if not reader.fieldnames:
             raise ValueError("CSV header row is missing.")
-        normalized = {h.strip().lower().replace(" ", "_"): h for h in reader.fieldnames if h}
-        aliases = {
-            "trade_date": ["trade_date","date","timestamp"],
-            "open": ["open","open_price","opn"],
-            "high": ["high","high_price","h"],
-            "low": ["low","low_price","l"],
-            "close": ["close","close_price","cls","closing_price"],
-            "symbol": ["symbol","ticker","underlying"]
-        }
-        mapping = {}
-        for target, candidates in aliases.items():
-            found = next((normalized[c] for c in candidates if c in normalized), None)
-            if found:
-                mapping[target] = found
-        missing = [x for x in ["trade_date","open","high","low","close"] if x not in mapping]
-        if missing:
-            raise ValueError("Required columns missing: " + ", ".join(missing) + ". Required: date, open, high, low, close.")
-        accepted, rejected, dates, records = [], 0, [], []
-        for line_no, row in enumerate(reader, start=2):
-            try:
-                raw_date = (row.get(mapping["trade_date"]) or "").strip()
-                parsed_date = None
-                for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d-%b-%Y", "%Y%m%d"):
-                    try:
-                        parsed_date = datetime.strptime(raw_date[:10], fmt).date()
-                        break
-                    except ValueError:
-                        pass
-                if parsed_date is None:
-                    raise ValueError("invalid trade date")
-                values = {k: float((row.get(mapping[k]) or "").replace(",","")) for k in ["open","high","low","close"]}
-                if any(v <= 0 for v in values.values()):
-                    raise ValueError("OHLC values must be positive")
-                if values["high"] < max(values["open"], values["close"], values["low"]):
-                    raise ValueError("high is below another OHLC value")
-                if values["low"] > min(values["open"], values["close"], values["high"]):
-                    raise ValueError("low is above another OHLC value")
-                symbol = (row.get(mapping["symbol"]) or "NIFTY 50").strip() if "symbol" in mapping else "NIFTY 50"
-                payload = {k: v for k, v in row.items() if k is not None}
-                accepted.append((parsed_date, symbol, payload))
-                dates.append(parsed_date)
-            except Exception:
+        date_aliases = ["trade_date", "date", "timestamp", "trad_dt", "biz_dt", "date1"]
+        accepted = []
+        rejected = 0
+        dates = []
+        for row in reader:
+            parsed = parse_trade_date(find_value(row, date_aliases))
+            if parsed is None:
                 rejected += 1
+                continue
+            clean = {str(k).strip(): (v.strip() if isinstance(v, str) else v) for k, v in row.items() if k is not None}
+            if dataset_key == "spot_ohlc":
+                aliases = {
+                    "open": ["open", "open_price", "opn", "opn_pric"],
+                    "high": ["high", "high_price", "hgh_pric"],
+                    "low": ["low", "low_price", "lw_pric"],
+                    "close": ["close", "close_price", "closing_price", "cls_pric"]
+                }
+                values = {}
+                for field, names in aliases.items():
+                    raw_value = find_value(clean, names)
+                    try:
+                        values[field] = float(str(raw_value).replace(",", "")) if raw_value is not None else None
+                    except ValueError:
+                        values[field] = None
+                if any(v is None or v <= 0 for v in values.values()):
+                    rejected += 1
+                    continue
+                if values["high"] < max(values["open"], values["close"], values["low"]) or values["low"] > min(values["open"], values["close"], values["high"]):
+                    rejected += 1
+                    continue
+            record_hash = hashlib.sha256(json.dumps(clean, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+            accepted.append((parsed, record_hash, clean))
+            dates.append(parsed)
         if not accepted:
-            raise ValueError("No valid rows found. Check the date and OHLC columns.")
+            raise ValueError("No date-valid rows found. Verify the date column and dataset file.")
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded.")
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    status = "validated" if rejected == 0 else "validated_with_rejections"
+        raise HTTPException(status_code=422, detail=str(exc)[:300])
+
+    status = "structural_ohlc_validated" if dataset_key == "spot_ohlc" and rejected == 0 else "ingested_pending_semantic_validation"
     with connect() as conn:
+        existing = conn.execute("SELECT id, accepted_rows FROM dataset_imports WHERE dataset_key=%s AND sha256=%s", (dataset_key, digest)).fetchone()
+        if existing:
+            return {"dataset_id": existing["id"], "status": "already_imported", "accepted_rows": existing["accepted_rows"], "rejected_rows": rejected, "sha256": digest, "duplicate_file": True}
         item = conn.execute("""
-          INSERT INTO datasets(dataset_key,source_name,source_url,file_name,first_date,last_date,
-            row_count,accepted_rows,rejected_rows,status,sha256,notes)
+          INSERT INTO dataset_imports(dataset_key,source_name,source_url,file_name,sha256,first_date,last_date,
+            row_count,accepted_rows,rejected_rows,status,notes)
           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id
-        """, (dataset_key,source_name,source_url,file.filename,min(dates),max(dates),
-              len(accepted)+rejected,len(accepted),rejected,status,digest,notes)).fetchone()
-        dataset_id = item["id"]
-        conn.executemany(
-          "INSERT INTO market_records(dataset_id,trade_date,symbol,payload) VALUES (%s,%s,%s,%s)",
-          [(dataset_id,d,s,json.dumps(p)) for d,s,p in accepted]
-        )
+        """, (dataset_key, source_name, source_url, file.filename, digest, min(dates), max(dates),
+              len(accepted)+rejected, len(accepted), rejected, status, notes)).fetchone()
+        import_id = item["id"]
+        conn.executemany("""
+          INSERT INTO dataset_records(dataset_key,trade_date,record_hash,source_import_id,payload)
+          VALUES (%s,%s,%s,%s,%s)
+          ON CONFLICT(dataset_key,trade_date,record_hash) DO NOTHING
+        """, [(dataset_key, d, h, import_id, json.dumps(payload)) for d,h,payload in accepted])
         conn.execute(
           "INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
-          ("csv_import", "CSV imported and OHLC-validated", json.dumps({"dataset_id":dataset_id,"file":file.filename,"accepted":len(accepted),"rejected":rejected,"sha256":digest}))
+          ("cloud_dataset_import", "User-authorized dataset file archived with row-level deduplication",
+           json.dumps({"dataset_id":import_id,"dataset_key":dataset_key,"file":file.filename,"accepted":len(accepted),"rejected":rejected,"sha256":digest}))
         )
-    return {"dataset_id":dataset_id,"status":status,"accepted_rows":len(accepted),"rejected_rows":rejected,
-            "first_date":min(dates).isoformat(),"last_date":max(dates).isoformat(),"sha256":digest}
+        inserted = conn.execute("SELECT COUNT(*) AS count FROM dataset_records WHERE source_import_id=%s", (import_id,)).fetchone()["count"]
+    return {"dataset_id": import_id, "status": status, "accepted_rows": len(accepted), "rejected_rows": rejected,
+            "new_records_from_file": inserted, "first_date": min(dates).isoformat(), "last_date": max(dates).isoformat(),
+            "sha256": digest, "duplicate_file": False}
+
+@app.get("/api/v1/pipeline/readiness")
+def pipeline_readiness():
+    with connect() as conn:
+        coverage = conn.execute("""
+          SELECT dataset_key, COUNT(*) AS rows, COUNT(DISTINCT trade_date) AS dates,
+                 MIN(trade_date) AS first_date, MAX(trade_date) AS last_date
+          FROM dataset_records GROUP BY dataset_key
+        """).fetchall()
+        model_count = conn.execute("SELECT COUNT(*) AS count FROM model_versions WHERE status='validated'").fetchone()["count"]
+    by_key = {r["dataset_key"]: r for r in coverage}
+    spot = by_key.get("spot_ohlc")
+    span_years = 0.0
+    if spot and spot["first_date"] and spot["last_date"]:
+        span_years = (spot["last_date"] - spot["first_date"]).days / 365.25
+    missing = sorted(DATASET_KEYS - set(by_key))
+    historical_ready = not missing and span_years >= 4.8
+    return {
+        "datasets": [dict(r) for r in coverage], "missing_datasets": missing,
+        "spot_history_years": round(span_years, 2), "historical_ingestion_ready": historical_ready,
+        "semantic_validation": "pending", "feature_engineering": "pending",
+        "walk_forward_validation": "pending", "validated_models": model_count,
+        "prediction_pipeline": "blocked_until_validation_passes",
+        "note": "A file archive is not proof of exchange authenticity or correct field mapping. No model is trained by this endpoint."
+    }
+
+@app.get("/api/v1/models")
+def list_models():
+    with connect() as conn:
+        rows = conn.execute("""
+          SELECT id,model_name,version,training_started_at,training_completed_at,training_cutoff,
+                 feature_schema,validation_metrics,status,created_at
+          FROM model_versions ORDER BY created_at DESC LIMIT 50
+        """).fetchall()
+    return {"items": [dict(r) for r in rows]}
+
+@app.get("/api/v1/predictions/latest")
+def latest_prediction():
+    with connect() as conn:
+        row = conn.execute("""
+          SELECT p.id,p.session_date,p.generated_at,p.input_cutoff,p.data_quality,p.scenarios,p.status,
+                 m.version AS model_version
+          FROM predictions p LEFT JOIN model_versions m ON m.id=p.model_version_id
+          WHERE p.status='published' ORDER BY p.session_date DESC LIMIT 1
+        """).fetchone()
+    return {"item": dict(row) if row else None}
 
 @app.get("/api/v1/audit")
 def audit():
     with connect() as conn:
         rows = conn.execute("SELECT id,event_type,message,details,created_at FROM audit_events ORDER BY created_at DESC LIMIT 100").fetchall()
-    return {"items":[dict(r) for r in rows]}
+    return {"items": [dict(r) for r in rows]}
