@@ -680,7 +680,7 @@ def start_five_year_historical_download():
         end_date = datetime.now(IST).date()
         start_date = end_date - timedelta(days=365*5)
         with connect() as conn:
-            active = conn.execute("SELECT id,status FROM historical_download_jobs WHERE status='running' ORDER BY started_at DESC LIMIT 1").fetchone()
+            active = conn.execute("SELECT id,status FROM historical_download_jobs WHERE status IN ('queued','running') ORDER BY started_at DESC LIMIT 1").fetchone()
             if active:
                 _history_lock.release()
                 return {"job_id":active["id"],"status":"already_running"}
