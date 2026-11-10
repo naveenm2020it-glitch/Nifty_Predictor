@@ -460,7 +460,7 @@ def _latest_report_payload():
 def export_latest_excel():
     from io import BytesIO
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Font, PatternFill, Alignment
     report=_latest_report_payload()
     scenarios=report["scenarios"]
     wb=Workbook()
@@ -495,7 +495,7 @@ def export_latest_excel():
         cell.fill=PatternFill("solid",fgColor="243B53")
     for row in ws.iter_rows(min_row=2):
         row[0].font=Font(bold=True)
-        row[1].alignment=__import__("openpyxl").styles.Alignment(wrap_text=True,vertical="top")
+        row[1].alignment=Alignment(wrap_text=True,vertical="top")
     metrics=report.get("validation_metrics") or {}
     ms=wb.create_sheet("Walk-forward metrics")
     ms.append(["Metric","Value"])
