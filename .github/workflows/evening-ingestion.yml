@@ -1,0 +1,39 @@
+name: NIFTY IQ evening data ingestion
+
+on:
+  schedule:
+    # 19:15 and 20:00 India time, Monday to Friday (UTC schedules).
+    - cron: "45 13 * * 1-5"
+    - cron: "30 14 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: nifty-iq-evening-ingestion
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Validate scheduler configuration
+        env:
+          API_URL: https://nifty-predictor-api-0gl1.onrender.com
+          SCHEDULER_TOKEN: \${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
+        run: |
+          if [ -z "$SCHEDULER_TOKEN" ]; then
+            echo "::error::Add NIFTY_IQ_SCHEDULER_TOKEN in GitHub Actions secrets and the same SCHEDULER_TOKEN in Render."
+            exit 1
+          fi
+          echo "Scheduler configuration found."
+
+      - name: Run protected official-source ingestion
+        env:
+          API_URL: https://nifty-predictor-api-0gl1.onrender.com
+          SCHEDULER_TOKEN: \${{ secrets.NIFTY_IQ_SCHEDULER_TOKEN }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --retry 5 --retry-all-errors --retry-delay 60 --max-time 900 \
+            -X POST "$API_URL/api/v1/jobs/evening" \
+            -H "X-Scheduler-Token: $SCHEDULER_TOKEN" \
+            -H "Accept: application/json"
