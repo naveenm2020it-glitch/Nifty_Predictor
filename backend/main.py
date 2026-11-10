@@ -267,6 +267,62 @@ def get_history_download_status():
         raise HTTPException(status_code=503, detail="Historical download status unavailable: " + str(exc)[:200])
 
 
+@app.get("/api/v1/pipeline/history/coverage")
+def get_history_coverage():
+    try:
+        with connect() as conn:
+            spot = conn.execute("""
+              SELECT COUNT(DISTINCT trade_date) AS total,
+                     MIN(trade_date) AS first_date, MAX(trade_date) AS last_date
+              FROM dataset_records WHERE dataset_key='spot_ohlc'
+            """).fetchone()
+            sources = conn.execute("""
+              SELECT payload->>'_source_key' AS source_key,
+                     COUNT(DISTINCT trade_date) AS covered_dates,
+                     MIN(trade_date) AS first_date, MAX(trade_date) AS last_date,
+                     COUNT(*) AS rows
+              FROM dataset_records
+              WHERE payload ? '_source_key'
+              GROUP BY payload->>'_source_key'
+            """).fetchall()
+            spot_dates = conn.execute("""
+              SELECT DISTINCT trade_date FROM dataset_records
+              WHERE dataset_key='spot_ohlc' ORDER BY trade_date
+            """).fetchall()
+            coverage = {r["source_key"]: dict(r) for r in sources if r["source_key"]}
+            expected = {
+              "nifty50_daily_ohlc_5y": "NIFTY 50 daily OHLC",
+              "india_vix": "India VIX",
+              "fo_bhavcopy": "NIFTY F&O bhavcopy",
+              "participant_oi": "Participant-wise OI",
+              "fii_derivatives": "FII derivatives statistics",
+              "fo_settlement": "Daily settlement prices",
+              "fo_volatility": "Daily volatility"
+            }
+            result = []
+            for key, label in expected.items():
+                item = coverage.get(key, {})
+                dates = int(item.get("covered_dates") or 0)
+                total = int(spot["total"] or 0)
+                result.append({
+                  "source_key": key, "dataset": label, "covered_dates": dates,
+                  "spot_trading_dates": total,
+                  "coverage_pct": round(dates / total * 100, 1) if total else 0,
+                  "first_date": item.get("first_date").isoformat() if item.get("first_date") else None,
+                  "last_date": item.get("last_date").isoformat() if item.get("last_date") else None,
+                  "rows": int(item.get("rows") or 0)
+                })
+            return {
+              "spot_trading_dates": int(spot["total"] or 0),
+              "first_date": spot["first_date"].isoformat() if spot["first_date"] else None,
+              "last_date": spot["last_date"].isoformat() if spot["last_date"] else None,
+              "sources": result,
+              "note": "Coverage compares source dates with imported NIFTY 50 trading dates. A date count does not prove every report's field semantics or completeness."
+            }
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Historical coverage unavailable: " + str(exc)[:220])
+
+
 @app.post("/api/v1/pipeline/features/backfill")
 def backfill_features(ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")):
     expected = os.getenv("INGEST_API_TOKEN", "")
