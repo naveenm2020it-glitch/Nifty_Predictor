@@ -55,13 +55,15 @@ If a filename is classified incorrectly, use the individual **Import CSV** butto
 ## 4. Download historical data automatically (recommended)
 
 1. Open **NSE data centre**.
-2. In the **Automatic 5-year historical data download** panel at the top, enter the Render `INGEST_API_TOKEN`.
-3. Click **Download 5-Year Historical Data**.
-4. Keep the page open while it runs. The progress panel refreshes every five seconds.
-5. Review the **Historical data coverage** panel for each source's date count, rows, percentage and first/last date.
-6. If the job stops or reports gaps, start it again after checking the error. Successfully archived source/date files are skipped; missing reports are retried.
+2. Find **Automatic 5-year historical data download** at the top.
+3. Click **Download 5-Year Historical Data**. This button does not require a token or local folder.
+4. Keep the webpage open while the progress panel refreshes every five seconds.
+5. Review **Historical data coverage** after the job finishes.
+6. If the job reports missing reports, the button becomes available for a guarded retry after the retry cooldown.
 
-The downloader requests NIFTY 50 OHLC and India VIX history in date chunks, then requests available NSE daily derivatives reports for each NIFTY trading date. NSE archive coverage is not guaranteed for every historical date or every report type. A completed job with gaps is not complete historical coverage. The coverage percentage is a date-count diagnostic, not proof of correct field mapping or full contract data.
+The web action is protected by a server-side single-job check and a retry cooldown. It can be started only from the published NIFTY IQ website. Cloud file uploads, feature backfill and other administrative actions still use the separate `INGEST_API_TOKEN`.
+
+The downloader requests NIFTY 50 OHLC and India VIX history in date chunks, then attempts the available NSE daily derivatives reports for each NIFTY trading date. NSE archive coverage, historical availability and rate limits are controlled by the source websites. A finished job with gaps is not complete coverage. The date-coverage percentage is a diagnostic, not proof of correct field mapping or full contract-level data.
 
 ## 5. Optional: import your own local files
 
@@ -119,7 +121,7 @@ The GitHub workflow uses this secret to call the protected API. Never add the to
 4. Wait for the result message. Repeat only for files that did not upload successfully.
 5. Click **Refresh cloud status**.
 
-The cloud upload is explicit; choosing a local folder does not upload it automatically. The new automatic historical downloader is separate: it downloads directly from the backend and does not require local files. The API accepts CSV uploads up to 30 MB each. Excel files are converted to CSV in the browser before upload. Uploaded rows are archived with dataset/date/hash deduplication. The database stores file provenance and row records; it does not act as a permanent raw-binary file archive.
+The cloud upload is explicit; choosing a local folder does not upload it automatically. The automatic historical downloader is separate: it downloads directly from public source adapters and does not require local files or a browser token. The API accepts CSV uploads up to 30 MB each. Excel files are converted to CSV in the browser before upload. Uploaded rows are archived with dataset/date/hash deduplication. The database stores file provenance and row records; it does not act as a permanent raw-binary file archive.
 
 If upload returns:
 - **401** — the token is wrong or does not match Render's `INGEST_API_TOKEN`.
