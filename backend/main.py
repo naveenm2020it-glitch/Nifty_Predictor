@@ -186,7 +186,7 @@ async def import_dataset(
     with connect() as conn:
         existing = conn.execute("SELECT id, accepted_rows FROM dataset_imports WHERE dataset_key=%s AND sha256=%s", (dataset_key, digest)).fetchone()
         if existing:
-            return {"dataset_id": existing["id"], "status": "already_imported", "accepted_rows": existing["accepted_rows"], "rejected_rows": rejected, "sha256": digest, "duplicate_file": True}
+            return {"dataset_id": existing["id"], "status": "already_imported", "accepted_rows": existing["accepted_rows"], "rejected_rows": rejected, "filtered_rows": filtered, "sha256": digest, "duplicate_file": True}
         item = conn.execute("""
           INSERT INTO dataset_imports(dataset_key,source_name,source_url,file_name,sha256,first_date,last_date,
             row_count,accepted_rows,rejected_rows,status,notes)
@@ -207,7 +207,7 @@ async def import_dataset(
         inserted = conn.execute("SELECT COUNT(*) AS count FROM dataset_records WHERE source_import_id=%s", (import_id,)).fetchone()["count"]
     return {"dataset_id": import_id, "status": status, "accepted_rows": len(accepted), "rejected_rows": rejected,
             "new_records_from_file": inserted, "first_date": min(dates).isoformat(), "last_date": max(dates).isoformat(),
-            "sha256": digest, "duplicate_file": False}
+            "sha256": digest, "duplicate_file": False, "filtered_rows": filtered, "nifty_symbol_filter_applied": fo_symbol_filter_applied}
 
 @app.get("/api/v1/pipeline/readiness")
 def pipeline_readiness():
