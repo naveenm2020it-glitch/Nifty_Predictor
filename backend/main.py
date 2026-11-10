@@ -52,7 +52,7 @@ def health():
     try:
         with connect() as conn:
             conn.execute("SELECT 1")
-        return {"status": "ok", "database": "connected", "persistence": "external_postgresql"}
+        return {"status": "ok", "database": "connected", "persistence": "postgresql_connected"}
     except Exception as exc:
         raise HTTPException(status_code=503, detail={"status": "degraded", "database": "unavailable", "reason": str(exc)[:180]})
 
@@ -79,7 +79,9 @@ def system_status():
             "market_data": "awaiting_verified_source_ingestion" if not records["count"] else "archived_pending_semantic_validation",
             "models": "not_trained" if not models["count"] else "validated_model_available",
             "forecast": "not_calculated" if not forecasts["count"] else "published_forecast_available",
-            "evening_scheduler": "GitHub Actions schedule requires NIFTY_IQ_SCHEDULER_TOKEN secret" if os.getenv("SCHEDULER_TOKEN") else "not_configured"
+            "ingest_token_configured": bool(os.getenv("INGEST_API_TOKEN")),
+            "scheduler_token_configured": bool(os.getenv("SCHEDULER_TOKEN")),
+            "evening_scheduler": "GitHub Actions schedule token configured" if os.getenv("SCHEDULER_TOKEN") else "not_configured"
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Database unavailable: {str(exc)[:160]}")
