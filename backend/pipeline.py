@@ -520,3 +520,183 @@ def pipeline_runs(limit=30):
           FROM ingestion_runs ORDER BY started_at DESC LIMIT %s
         """, (limit,)).fetchall()
     return {"items": [dict(r) for r in rows]}
+
+
+# Long-running five-year historical backfill. Progress is persisted after each
+# trading date so a failed run can be restarted without duplicating records.
+import threading
+_history_lock = threading.Lock()
+
+def _history_job_update(job_id, **fields):
+    allowed = {"status", "total_dates", "processed_dates", "downloaded_files", "missing_files", "details", "error", "finished_at"}
+    sets, values = [], []
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        sets.append(key + "=%s")
+        values.append(json.dumps(value, default=str) if key == "details" else value)
+    sets.append("updated_at=NOW()")
+    values.append(job_id)
+    with connect() as conn:
+        conn.execute("UPDATE historical_download_jobs SET " + ",".join(sets) + " WHERE id=%s", values)
+
+def _source_exists(source_key, report_date):
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM source_downloads WHERE source_key=%s AND report_date=%s AND status='downloaded' LIMIT 1",
+            (source_key, report_date)
+        ).fetchone()
+    return bool(row)
+
+def _run_five_year_history(job_id, start_date, end_date):
+    downloaded = 0
+    missing = 0
+    outcomes = []
+    try:
+        session = requests.Session()
+        session.headers.update({"User-Agent": UA, "Content-Type": "application/json; charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest", "Referer": NIFTY_INDICES + "/reports/historical-data"})
+        spot_rows = _nifty_index_rows(session, "getHistoricaldatatabletoString", start_date, end_date, "NIFTY 50")
+        spot_rows = sorted(spot_rows, key=lambda r: _parse_date(r.get("HistoricalDate")) or date.min)
+        valid_spot = []
+        for row in spot_rows:
+            d = _parse_date(row.get("HistoricalDate"))
+            if not d or d < start_date or d > end_date:
+                continue
+            if any(_clean_number(row.get(k)) is None for k in ("OPEN", "HIGH", "LOW", "CLOSE")):
+                continue
+            valid_spot.append((d, row))
+        if not valid_spot:
+            raise RuntimeError("NSE Indices returned no valid NIFTY 50 OHLC rows for the requested five-year range.")
+        trade_dates = sorted({d for d, _ in valid_spot})
+        _history_job_update(job_id, total_dates=len(trade_dates), details={"phase":"downloading_index_history","spot_rows":len(valid_spot)})
+        # Store the full official index history as one source import, with each row dated individually.
+        spot_payload = [row for _, row in valid_spot]
+        if not _source_exists("nifty50_daily_ohlc", trade_dates[-1]):
+            _insert_source("spot_ohlc", "nifty50_daily_ohlc", "NSE Indices — NIFTY 50 historical OHLC",
+                NIFTY_INDICES + "/reports/historical-data", "nifty50_history_" + start_date.isoformat() + "_" + end_date.isoformat() + ".json",
+                trade_dates[-1], json.dumps(spot_payload).encode(), spot_payload)
+            downloaded += 1
+
+        try:
+            vix_rows = _vix_rows(session, start_date, end_date)
+            vix_by_date = {}
+            for row in vix_rows:
+                d = _parse_date(row.get("date") or row.get("HistoricalDate"))
+                if d and start_date <= d <= end_date:
+                    vix_by_date.setdefault(d, []).append(row)
+            for d, rows in sorted(vix_by_date.items()):
+                if _source_exists("india_vix", d):
+                    continue
+                _insert_source("vix_volatility", "india_vix", "NSE Indices — India VIX historical OHLC",
+                    NIFTY_INDICES + "/reports/historical-data", "india_vix_" + d.isoformat() + ".json",
+                    d, json.dumps(rows).encode(), rows)
+                downloaded += 1
+        except Exception as exc:
+            missing += 1
+            outcomes.append({"source":"india_vix_history","status":"missing","error":str(exc)[:240]})
+
+        nse = _session()
+        _history_job_update(job_id, status="running", processed_dates=0, downloaded_files=downloaded,
+                            missing_files=missing, details={"phase":"downloading_daily_derivatives","trading_dates":len(trade_dates)})
+        for index, trade_date in enumerate(trade_dates, start=1):
+            ymd = trade_date.strftime("%Y%m%d")
+            dmy = trade_date.strftime("%d%m%Y")
+            legacy = trade_date.strftime("%d%b%Y").upper()
+            tasks = [
+                ("fo_bhavcopy","fo_bhavcopy","F&O - UDiFF Common Bhavcopy Final (zip)",
+                 "BhavCopy_NSE_FO_0_0_0_" + ymd + "_F_0000.csv.zip",
+                 ["content/fo/BhavCopy_NSE_FO_0_0_0_" + ymd + "_F_0000.csv.zip",
+                  "content/historical/DERIVATIVES/" + str(trade_date.year) + "/" + trade_date.strftime("%b").upper() + "/fo" + legacy[:2] + legacy[2:5] + legacy[5:] + "bhav.csv.zip"], "zip"),
+                ("participant_oi","participant_oi","F&O - Participant wise Open Interest(csv)",
+                 "fao_participant_oi_" + dmy + ".csv",["content/nsccl/fao_participant_oi_" + dmy + ".csv"],"participant"),
+                ("fii_derivatives","fii_derivatives","F&O - FII Derivatives Statistics",
+                 "fii_stats_" + trade_date.strftime("%d-%b-%Y") + ".xls",[],"xls"),
+                ("vix_volatility","fo_settlement","F&O - Daily Settlement Prices",
+                 "FOSett_prce_" + dmy + ".csv",["content/fo/FOSett_prce_" + dmy + ".csv"],"csv"),
+                ("vix_volatility","fo_volatility","F&O - Daily Volatility",
+                 "FOVOLT_" + dmy + ".csv",["content/fo/FOVOLT_" + dmy + ".csv"],"csv"),
+            ]
+            for dataset_key, source_key, report_name, filename, paths, kind in tasks:
+                if _source_exists(source_key, trade_date):
+                    continue
+                try:
+                    raw, source_url = _download_nse(nse, trade_date, report_name, paths)
+                    if kind == "zip":
+                        rows = _csv_rows(raw, zipped=True)
+                        rows = [r for r in rows if str(_get(r, ["TckrSymb","Symbol","Ticker","Undrlyg"] ) or "").upper() == "NIFTY"]
+                        if not rows:
+                            raise ValueError("Bhavcopy has no NIFTY contracts after symbol filtering.")
+                    elif kind == "xls":
+                        rows = _xls_rows(raw)
+                        rows = [dict(r, _scope_note="Aggregate FII index-derivatives context; not NIFTY-underlying-only.") for r in rows]
+                    elif kind == "participant":
+                        rows = _participant_rows(raw)
+                        rows = [dict(r, _trade_date=trade_date.isoformat()) for r in rows]
+                    else:
+                        rows = _csv_rows(raw)
+                        filtered = []
+                        for row in rows:
+                            symbol = _get(row, ["TckrSymb","Symbol","Ticker","Underlying","Undrlyg","FinInstrmNm"])
+                            if symbol is not None and "NIFTY" not in str(symbol).upper():
+                                continue
+                            item = dict(row)
+                            if symbol is None:
+                                item["_scope_note"] = "Exchange-wide report; symbol unavailable; semantic NIFTY mapping required."
+                            filtered.append(item)
+                        rows = filtered
+                    if not rows:
+                        raise ValueError("Downloaded report contained no usable rows.")
+                    _insert_source(dataset_key, source_key, "NSE India — " + report_name,
+                        source_url, filename, trade_date, raw, rows)
+                    downloaded += 1
+                except Exception as exc:
+                    missing += 1
+                    outcomes.append({"date":trade_date.isoformat(),"source":source_key,"status":"missing","error":str(exc)[:180]})
+                time.sleep(0.25)
+            _history_job_update(job_id, status="running", processed_dates=index, downloaded_files=downloaded,
+                missing_files=missing, details={"phase":"downloading_daily_derivatives","current_date":trade_date.isoformat(),
+                "trading_dates":len(trade_dates),"recent_missing":outcomes[-20:]})
+        status = "completed" if missing == 0 else "completed_with_gaps"
+        _history_job_update(job_id, status=status, processed_dates=len(trade_dates), downloaded_files=downloaded,
+            missing_files=missing, details={"phase":"finished","trading_dates":len(trade_dates),
+            "first_trade_date":trade_dates[0].isoformat(),"last_trade_date":trade_dates[-1].isoformat(),
+            "recent_missing":outcomes[-100:]}, finished_at=datetime.now(IST))
+        with connect() as conn:
+            conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
+                ("five_year_historical_download","Five-year historical source download finished",
+                 json.dumps({"job_id":job_id,"status":status,"downloaded_files":downloaded,"missing_files":missing,
+                 "trade_dates":len(trade_dates)},default=str)))
+    except Exception as exc:
+        log.exception("Five-year historical download failed")
+        _history_job_update(job_id, status="failed", downloaded_files=downloaded, missing_files=missing,
+            error=str(exc)[:1000], details={"phase":"failed","recent_missing":outcomes[-100:]},
+            finished_at=datetime.now(IST))
+
+def start_five_year_historical_download():
+    if not _history_lock.acquire(blocking=False):
+        return {"status":"already_running","message":"A historical download is already running."}
+    try:
+        end_date = datetime.now(IST).date()
+        start_date = end_date - timedelta(days=365*5)
+        with connect() as conn:
+            active = conn.execute("SELECT id,status FROM historical_download_jobs WHERE status='running' ORDER BY started_at DESC LIMIT 1").fetchone()
+            if active:
+                _history_lock.release()
+                return {"job_id":active["id"],"status":"already_running"}
+            job = conn.execute("""
+              INSERT INTO historical_download_jobs(status,start_date,end_date,details)
+              VALUES ('queued',%s,%s,%s) RETURNING id
+            """,(start_date,end_date,json.dumps({"phase":"queued"}))).fetchone()
+        thread = threading.Thread(target=_run_five_year_history,args=(job["id"],start_date,end_date),daemon=True)
+        thread.start()
+        return {"job_id":job["id"],"status":"started","start_date":start_date.isoformat(),"end_date":end_date.isoformat(),
+                "message":"Five-year historical download started. Keep this service available while it runs; progress is saved in the database."}
+    finally:
+        if _history_lock.locked():
+            _history_lock.release()
+
+def historical_download_status():
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM historical_download_jobs ORDER BY started_at DESC LIMIT 1").fetchone()
+    return {"job":dict(row) if row else None}
