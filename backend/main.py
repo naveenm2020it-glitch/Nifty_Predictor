@@ -469,8 +469,9 @@ def research_summary():
       "latest_model": dict(latest_model) if latest_model else None,
       "latest_prediction": dict(latest_prediction) if latest_prediction else None,
       "training_available": int(feature_count or 0) >= 301,
-      "prediction_available": bool(latest_model and latest_model["status"] == "validated"),
-      "important_scope": "The current trained baseline predicts next available daily NIFTY close direction only. It does not model option premiums, intraday 15-minute targets, Greeks or execution."
+      "prediction_available": bool(latest_prediction and latest_prediction["status"] == "published"),
+      "analysis_mode": "daily_incremental_evidence",
+      "important_scope": "Daily next-session evidence report uses latest available NSE data and stored rolling price context. It does not claim calibrated probabilities or validated ML accuracy."
     }
 
 
