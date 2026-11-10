@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 import os
 import time
 import threading
@@ -784,84 +785,129 @@ def _model_feature_vector(features):
         (val("sma_20") / val("sma_50") - 1) * 100 if val("sma_50") else 0.0,
     ]
 
+
+def _fit_logistic_model(X, y, iterations=220, learning_rate=0.08, l2=0.01):
+    width=len(X[0])
+    means=[sum(row[j] for row in X)/len(X) for j in range(width)]
+    scales=[]
+    for j in range(width):
+        variance=sum((row[j]-means[j])**2 for row in X)/len(X)
+        scales.append(max(variance**0.5,1e-8))
+    weights=[0.0]*width
+    bias=0.0
+    n=len(X)
+    for _ in range(iterations):
+        grad=[0.0]*width
+        grad_bias=0.0
+        for row,label in zip(X,y):
+            z=bias
+            for j in range(width):
+                z+=weights[j]*((row[j]-means[j])/scales[j])
+            z=max(-30.0,min(30.0,z))
+            probability=1.0/(1.0+math.exp(-z))
+            error=probability-label
+            grad_bias+=error
+            for j in range(width):
+                grad[j]+=error*((row[j]-means[j])/scales[j])
+        bias-=learning_rate*grad_bias/n
+        for j in range(width):
+            weights[j]-=learning_rate*(grad[j]/n+l2*weights[j])
+    return {"means":means,"scales":scales,"weights":weights,"bias":bias,
+            "model_type":"standardized_logistic_regression_pure_python"}
+
+
+def _logistic_probability(model, vector):
+    z=float(model["bias"])
+    for j,value in enumerate(vector):
+        z+=model["weights"][j]*((value-model["means"][j])/model["scales"][j])
+    z=max(-30.0,min(30.0,z))
+    return 1.0/(1.0+math.exp(-z))
+
+
+def _direction_metrics(actual, probabilities, baseline):
+    predicted=[1 if p>=0.5 else 0 for p in probabilities]
+    n=max(1,len(actual))
+    accuracy=sum(1 for a,p in zip(actual,predicted) if a==p)/n
+    recalls=[]
+    for cls in (0,1):
+        count=sum(1 for a in actual if a==cls)
+        recalls.append(sum(1 for a,p in zip(actual,predicted) if a==cls and p==cls)/count if count else 0.0)
+    positives=sum(1 for a in actual if a==1)
+    tp=sum(1 for a,p in zip(actual,predicted) if a==1 and p==1)
+    precision=tp/ sum(1 for p in predicted if p==1) if any(predicted) else 0.0
+    recall=tp/positives if positives else 0.0
+    brier=sum((p-a)**2 for a,p in zip(actual,probabilities))/n
+    baseline_accuracy=sum(1 for a,p in zip(actual,baseline) if a==p)/n
+    return {"accuracy":accuracy,"balanced_accuracy":sum(recalls)/2,"precision_up":precision,
+            "recall_up":recall,"brier_score":brier,"majority_baseline_accuracy":baseline_accuracy,
+            "beats_majority_baseline":accuracy>baseline_accuracy}
+
+
 def train_walk_forward_model():
-    """Train a next-session direction research baseline with chronological evaluation."""
-    validation = validate_cloud_datasets()
-    if not validation.get("spot_ohlc", {}).get("passed"):
+    """Train a CPU-light next-session direction baseline with expanding chronological tests."""
+    validation=validate_cloud_datasets()
+    if not validation.get("spot_ohlc",{}).get("passed"):
         return {"status":"blocked_semantic_validation","validation":validation,
-                "note":"NIFTY OHLC must pass five-year date-span, row-integrity and conflict checks before model training."}
-    import pickle
-    import numpy as np
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import accuracy_score, balanced_accuracy_score, brier_score_loss, precision_score, recall_score
-    from sklearn.pipeline import make_pipeline
-    from sklearn.preprocessing import StandardScaler
+                "note":"NIFTY OHLC must pass the five-year integrity gate before model training."}
     with connect() as conn:
-        rows = conn.execute("SELECT trade_date,features FROM daily_feature_snapshots WHERE feature_schema_version=%s ORDER BY trade_date ASC", (FEATURE_SCHEMA,)).fetchall()
-    samples = []
+        rows=conn.execute("SELECT trade_date,features FROM daily_feature_snapshots WHERE feature_schema_version=%s ORDER BY trade_date ASC",(FEATURE_SCHEMA,)).fetchall()
+    samples=[]
     for i in range(len(rows)-1):
-        current, following = rows[i]["features"], rows[i+1]["features"]
-        vector = _model_feature_vector(current)
-        close, next_close = _clean_number(current.get("close")), _clean_number(following.get("close"))
-        if vector is None or not close or not next_close or close == next_close:
+        current,following=rows[i]["features"],rows[i+1]["features"]
+        vector=_model_feature_vector(current)
+        close,next_close=_clean_number(current.get("close")),_clean_number(following.get("close"))
+        if vector is None or not close or not next_close or close==next_close:
             continue
-        samples.append({"date": rows[i]["trade_date"], "x": vector, "y": int(next_close > close)})
-    n = len(samples)
-    if n < 300:
+        samples.append({"date":rows[i]["trade_date"],"x":vector,"y":int(next_close>close)})
+    n=len(samples)
+    if n<300:
         return {"status":"blocked_insufficient_samples","samples":n,"required":300,
                 "note":"At least 300 valid next-session labels are required."}
-    X = np.asarray([s["x"] for s in samples], dtype=float)
-    y = np.asarray([s["y"] for s in samples], dtype=int)
-    initial = max(200, int(n * 0.60))
-    remaining = n - initial
-    folds = min(5, remaining // 25)
-    if folds < 3:
+    X=[sample["x"] for sample in samples]
+    y=[sample["y"] for sample in samples]
+    initial=max(200,int(n*.60))
+    remaining=n-initial
+    folds=min(5,remaining//25)
+    if folds<3:
         return {"status":"blocked_insufficient_walk_forward_windows","samples":n}
-    fold_size = remaining // folds
-    probs, truths, baselines, fold_metrics = [], [], [], []
+    fold_size=remaining//folds
+    all_probabilities=[]; all_actual=[]; all_baselines=[]; fold_metrics=[]
     for fold in range(folds):
-        train_end = initial + fold * fold_size
-        test_end = n if fold == folds-1 else min(n, train_end+fold_size)
-        if test_end <= train_end:
-            continue
-        model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1500,class_weight="balanced",random_state=42))
-        model.fit(X[:train_end],y[:train_end])
-        probability = model.predict_proba(X[train_end:test_end])[:,1]
-        pred = (probability >= .5).astype(int)
-        truth = y[train_end:test_end]
-        probs.extend(probability.tolist()); truths.extend(truth.tolist())
-        baselines.extend([int(np.mean(y[:train_end]) >= .5)] * len(truth))
-        fold_metrics.append({"fold":fold+1,"train_samples":train_end,"test_samples":len(truth),
+        train_end=initial+fold*fold_size
+        test_end=n if fold==folds-1 else min(n,train_end+fold_size)
+        if test_end<=train_end: continue
+        model=_fit_logistic_model(X[:train_end],y[:train_end])
+        probabilities=[_logistic_probability(model,row) for row in X[train_end:test_end]]
+        actual=y[train_end:test_end]
+        baseline_value=1 if sum(y[:train_end])/train_end>=.5 else 0
+        fold_score=_direction_metrics(actual,probabilities,[baseline_value]*len(actual))
+        all_probabilities.extend(probabilities); all_actual.extend(actual)
+        all_baselines.extend([baseline_value]*len(actual))
+        fold_metrics.append({"fold":fold+1,"train_samples":train_end,"test_samples":len(actual),
           "test_start":samples[train_end]["date"].isoformat(),"test_end":samples[test_end-1]["date"].isoformat(),
-          "accuracy":float(accuracy_score(truth,pred)),"balanced_accuracy":float(balanced_accuracy_score(truth,pred)),
-          "brier_score":float(brier_score_loss(truth,probability))})
-    p=np.asarray(probs); actual=np.asarray(truths); pred=(p>=.5).astype(int); base=np.asarray(baselines)
-    metrics={"out_of_sample_samples":int(len(actual)),"folds":fold_metrics,
-      "accuracy":float(accuracy_score(actual,pred)),"balanced_accuracy":float(balanced_accuracy_score(actual,pred)),
-      "precision_up":float(precision_score(actual,pred,zero_division=0)),
-      "recall_up":float(recall_score(actual,pred,zero_division=0)),
-      "brier_score":float(brier_score_loss(actual,p)),
-      "majority_baseline_accuracy":float(accuracy_score(actual,base)),
-      "beats_majority_baseline":bool(accuracy_score(actual,pred)>accuracy_score(actual,base)),
-      "method":"Expanding-window chronological evaluation; preprocessing fitted within each training window.",
-      "validation_gate":{"minimum_oos_samples":100,"minimum_folds":3,"minimum_balanced_accuracy":0.52,"maximum_brier_score":0.26,"must_beat_majority_baseline":True},
-      "interpretation":"Research evaluation only; not proof of future profitability or calibrated trading odds."}
-    final_model=make_pipeline(StandardScaler(),LogisticRegression(max_iter=1500,class_weight="balanced",random_state=42))
-    final_model.fit(X,y)
-    artifact=pickle.dumps(final_model,protocol=pickle.HIGHEST_PROTOCOL)
+          "accuracy":fold_score["accuracy"],"balanced_accuracy":fold_score["balanced_accuracy"],
+          "brier_score":fold_score["brier_score"]})
+    metrics=_direction_metrics(all_actual,all_probabilities,all_baselines)
+    metrics.update({"out_of_sample_samples":len(all_actual),"folds":fold_metrics,
+      "method":"Expanding-window chronological evaluation; standardization is fitted within each training window.",
+      "validation_gate":{"minimum_oos_samples":100,"minimum_folds":3,"minimum_balanced_accuracy":0.52,
+        "maximum_brier_score":0.26,"must_beat_majority_baseline":True},
+      "interpretation":"Research evaluation only; not proof of future profitability or calibrated trading odds."})
+    final_model=_fit_logistic_model(X,y)
     version="nifty-direction-"+datetime.now(IST).strftime("%Y%m%d-%H%M%S")
+    artifact=json.dumps(final_model,separators=(",",":")).encode("utf-8")
     schema={"feature_schema":FEATURE_SCHEMA,"features":MODEL_FEATURES,"target":"next_available_session_close_up",
       "training_samples":n,"first_sample":samples[0]["date"].isoformat(),"last_sample":samples[-1]["date"].isoformat(),
-      "model_type":"StandardScaler + LogisticRegression",
+      "model_type":"Pure-Python standardized logistic regression",
       "label_definition":"1 when next available NIFTY daily close is greater than current close; ties excluded."}
-    status="validated" if len(actual)>=100 and len(fold_metrics)>=3 and metrics["balanced_accuracy"]>=0.52 and metrics["brier_score"]<0.26 and metrics["beats_majority_baseline"] else "rejected"
+    status="validated" if len(all_actual)>=100 and len(fold_metrics)>=3 and metrics["balanced_accuracy"]>=.52 and metrics["brier_score"]<.26 and metrics["beats_majority_baseline"] else "rejected"
     with connect() as conn:
         model_row=conn.execute("""INSERT INTO model_versions(model_name,version,training_started_at,training_completed_at,training_cutoff,feature_schema,validation_metrics,status)
           VALUES (%s,%s,NOW(),NOW(),%s,%s,%s,%s) RETURNING id""",
           ("NIFTY next-session direction baseline",version,samples[-1]["date"],json.dumps(schema),json.dumps(metrics),status)).fetchone()
         conn.execute("""INSERT INTO model_artifacts(model_version_id,artifact_name,media_type,sha256,artifact_bytes)
           VALUES (%s,%s,%s,%s,%s)""",
-          (model_row["id"],"direction-model.pkl","application/octet-stream",hashlib.sha256(artifact).hexdigest(),artifact))
+          (model_row["id"],"direction-model.json","application/json",hashlib.sha256(artifact).hexdigest(),artifact))
         conn.execute("INSERT INTO audit_events(event_type,message,details) VALUES (%s,%s,%s)",
           ("model_walk_forward_training","Chronological next-session direction model evaluated and stored",
            json.dumps({"model_id":model_row["id"],"version":version,"status":status,"metrics":metrics})))
@@ -869,36 +915,26 @@ def train_walk_forward_model():
 
 
 def generate_next_session_prediction():
-    """Generate an evidence-labelled next-session scenario from the latest validated model."""
-    import pickle
-    import numpy as np
+    """Generate a next-session directional research scenario from the latest validated model."""
     with connect() as conn:
         model_row=conn.execute("""SELECT m.id,m.version,m.validation_metrics,a.artifact_bytes
           FROM model_versions m JOIN model_artifacts a ON a.model_version_id=m.id
-          WHERE m.status='validated' AND a.artifact_name='direction-model.pkl'
+          WHERE m.status='validated' AND a.artifact_name='direction-model.json'
           ORDER BY m.created_at DESC LIMIT 1""").fetchone()
         latest=conn.execute("""SELECT trade_date,features FROM daily_feature_snapshots
           WHERE feature_schema_version=%s ORDER BY trade_date DESC LIMIT 1""",(FEATURE_SCHEMA,)).fetchone()
-    if not model_row:
-        return {"status":"blocked_no_validated_model","note":"Run historical features and walk-forward training first."}
-    if not latest:
-        return {"status":"blocked_no_features"}
+    if not model_row:return {"status":"blocked_no_validated_model","note":"Run historical feature generation and walk-forward training first."}
+    if not latest:return {"status":"blocked_no_features"}
     vector=_model_feature_vector(latest["features"])
-    if vector is None:
-        return {"status":"blocked_invalid_features"}
-    model=pickle.loads(bytes(model_row["artifact_bytes"]))
-    p_up=float(model.predict_proba(np.asarray([vector],dtype=float))[0][1])
-    p_down=1.0-p_up
-    close=float(latest["features"]["close"])
-    atr=float(latest["features"].get("atr14_simple") or 0)
-    if atr<=0:
-        return {"status":"blocked_invalid_atr"}
-    bias="bullish" if p_up>=0.55 else "bearish" if p_up<=0.45 else "range_or_uncertain"
+    if vector is None:return {"status":"blocked_invalid_features"}
+    model=json.loads(bytes(model_row["artifact_bytes"]).decode("utf-8"))
+    p_up=_logistic_probability(model,vector); p_down=1.0-p_up
+    close=float(latest["features"]["close"]); atr=float(latest["features"].get("atr14_simple") or 0)
+    if atr<=0:return {"status":"blocked_invalid_atr"}
+    bias="bullish" if p_up>=.55 else "bearish" if p_up<=.45 else "range_or_uncertain"
     next_day=latest["trade_date"]+timedelta(days=1)
-    while next_day.weekday()>=5:
-        next_day+=timedelta(days=1)
-    scenarios={
-      "bias":bias,"probability_up":round(p_up,4),"probability_down":round(p_down,4),
+    while next_day.weekday()>=5:next_day+=timedelta(days=1)
+    scenarios={"bias":bias,"probability_up":round(p_up,4),"probability_down":round(p_down,4),
       "reference_close":close,"atr14":atr,
       "bullish":{"condition":"Price holds above reference close and confirms upside continuation.",
         "trigger_reference":round(close+.25*atr,2),"target_zone":[round(close+.5*atr,2),round(close+atr,2)],
@@ -924,131 +960,6 @@ def generate_next_session_prediction():
            json.dumps({"prediction_id":saved["id"],"model_version":model_row["version"],"session_date":next_day.isoformat()})))
     return {"status":"published","prediction_id":saved["id"],"session_date":next_day.isoformat(),
       "model_version":model_row["version"],"scenarios":scenarios}
-
-
-
-def _wilson_interval(wins, total, z=1.96):
-    if total <= 0:
-        return [None, None]
-    p = wins / total
-    denom = 1 + z*z/total
-    center = (p + z*z/(2*total)) / denom
-    margin = z * ((p*(1-p)/total + z*z/(4*total*total)) ** 0.5) / denom
-    return [max(0.0, center-margin), min(1.0, center+margin)]
-
-
-def summarize_nifty_options():
-    """Build a historical EOD option-chain snapshot from archived NSE bhavcopy rows."""
-    with connect() as conn:
-        rows = conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='fo_bhavcopy' ORDER BY trade_date DESC LIMIT 10000").fetchall()
-        spot = conn.execute("SELECT trade_date,payload FROM dataset_records WHERE dataset_key='spot_ohlc' ORDER BY trade_date DESC LIMIT 20").fetchall()
-    if not rows:
-        return {"status":"no_data","note":"No NIFTY F&O bhavcopy records have been archived yet."}
-    latest_date = max(r["trade_date"] for r in rows)
-    latest = [r["payload"] for r in rows if r["trade_date"] == latest_date]
-    spot_close = None
-    for item in spot:
-        value = _clean_number(_get(item["payload"], ["CLOSE","Close","close"]))
-        if value and value > 0:
-            spot_close = value
-            break
-    contracts = {}
-    for row in latest:
-        symbol = str(_get(row, ["TckrSymb","Symbol","Ticker","Undrlyg"]) or "").upper()
-        option_type = str(_get(row, ["OptnTp","Option Type","OptionType"]) or "").upper()
-        expiry = _parse_date(_get(row, ["XpryDt","Expiry Date","ExpiryDate"]))
-        strike = _clean_number(_get(row, ["StrkPric","Strike Price","StrikePrice"]))
-        if symbol != "NIFTY" or option_type not in ("CE","PE") or not expiry or strike is None:
-            continue
-        key = (expiry, strike, option_type)
-        contracts[key] = {
-            "expiry": expiry.isoformat(), "strike": strike, "type": option_type,
-            "close": _clean_number(_get(row, ["ClsPric","Close","Close Price"])),
-            "oi": _clean_number(_get(row, ["OpnIntrst","Open Interest","OpenInterest"])) or 0,
-            "change_oi": _clean_number(_get(row, ["ChngInOpnIntrst","Change in OI","ChangeInOpenInterest"])) or 0,
-            "volume": _clean_number(_get(row, ["TtlTradgVol","Total Traded Volume","Volume"])) or 0,
-        }
-    if not contracts:
-        return {"status":"unmapped","trade_date":latest_date.isoformat(),
-                "note":"Latest bhavcopy rows were found, but option type, expiry and strike fields could not be mapped."}
-    expiry = sorted({key[0] for key in contracts})[0]
-    selected = [v for (e, _, _), v in contracts.items() if e == expiry]
-    by_strike = {}
-    for item in selected:
-        by_strike.setdefault(item["strike"], {})[item["type"]] = item
-    strikes = sorted(by_strike)
-    pain_values = []
-    for settlement in strikes:
-        pain = sum(sides.get("CE", {}).get("oi", 0)*max(0,settlement-strike) +
-                   sides.get("PE", {}).get("oi", 0)*max(0,strike-settlement)
-                   for strike,sides in by_strike.items())
-        pain_values.append((pain,settlement))
-    max_pain = min(pain_values)[1] if pain_values else None
-    ce_total = sum(x.get("CE",{}).get("oi",0) for x in by_strike.values())
-    pe_total = sum(x.get("PE",{}).get("oi",0) for x in by_strike.values())
-    ce_strikes=[(x.get("CE",{}).get("oi",0),k) for k,x in by_strike.items() if "CE" in x]
-    pe_strikes=[(x.get("PE",{}).get("oi",0),k) for k,x in by_strike.items() if "PE" in x]
-    chain=[]
-    for strike,sides in by_strike.items():
-        ce,pe=sides.get("CE",{}),sides.get("PE",{})
-        chain.append({"strike":strike,"ce_ltp":ce.get("close"),"ce_oi":ce.get("oi"),
-          "ce_change_oi":ce.get("change_oi"),"ce_volume":ce.get("volume"),
-          "pe_ltp":pe.get("close"),"pe_oi":pe.get("oi"),
-          "pe_change_oi":pe.get("change_oi"),"pe_volume":pe.get("volume")})
-    if spot_close is not None:
-        chain=sorted(sorted(chain,key=lambda x:abs(x["strike"]-spot_close))[:31],key=lambda x:x["strike"])
-    else:
-        chain=sorted(chain,key=lambda x:x["strike"])
-    return {"status":"available","trade_date":latest_date.isoformat(),"expiry":expiry.isoformat(),
-      "spot_close":spot_close,"max_pain":max(pain_values)[1] if False else max_pain,
-      "put_call_oi_ratio":round(pe_total/ce_total,3) if ce_total else None,
-      "highest_put_oi_support":max(pe_strikes)[1] if pe_strikes else None,
-      "highest_call_oi_resistance":max(ce_strikes)[1] if ce_strikes else None,
-      "ce_oi_total":ce_total,"pe_oi_total":pe_total,"contracts_mapped":len(selected),
-      "chain":chain,"note":"Historical end-of-day bhavcopy snapshot, not live option-chain data or an intraday trading signal."}
-
-
-def summarize_price_patterns():
-    """Calculate transparent daily candle-pattern counts and next-session close outcomes."""
-    with connect() as conn:
-        rows=conn.execute("""SELECT trade_date,jsonb_agg(payload) AS payloads FROM dataset_records
-          WHERE dataset_key='spot_ohlc' GROUP BY trade_date ORDER BY trade_date ASC""").fetchall()
-    bars=[]
-    for record in rows:
-        valid=[]
-        for p in record["payloads"]:
-            vals=[_clean_number(_get(p,names)) for names in
-              (["OPEN","Open","open"],["HIGH","High","high"],["LOW","Low","low"],["CLOSE","Close","close"])]
-            if None not in vals and min(vals)>0 and vals[1]>=max(vals[0],vals[3],vals[2]) and vals[2]<=min(vals[0],vals[3],vals[1]):
-                valid.append(tuple(vals))
-        if len(set(valid))==1:
-            o,h,l,cl=valid[0];bars.append({"date":record["trade_date"],"open":o,"high":h,"low":l,"close":cl})
-    definitions={k:[] for k in ("bullish_engulfing","bearish_engulfing","hammer","shooting_star","inside_day","wide_range_day")}
-    for i in range(1,len(bars)-1):
-        b,prev,nxt=bars[i],bars[i-1],bars[i+1]
-        body=abs(b["close"]-b["open"]);span=max(b["high"]-b["low"],1e-9)
-        upper=b["high"]-max(b["open"],b["close"]);lower=min(b["open"],b["close"])-b["low"]
-        signals=[]
-        if prev["close"]<prev["open"] and b["close"]>b["open"] and b["open"]<=prev["close"] and b["close"]>=prev["open"]:signals.append("bullish_engulfing")
-        if prev["close"]>prev["open"] and b["close"]<b["open"] and b["open"]>=prev["close"] and b["close"]<=prev["open"]:signals.append("bearish_engulfing")
-        if lower>=max(body*2,span*.45) and upper<=span*.2 and b["close"]>=b["open"]:signals.append("hammer")
-        if upper>=max(body*2,span*.45) and lower<=span*.2 and b["close"]<=b["open"]:signals.append("shooting_star")
-        if b["high"]<prev["high"] and b["low"]>prev["low"]:signals.append("inside_day")
-        if span>=(prev["high"]-prev["low"])*1.5:signals.append("wide_range_day")
-        for name in signals:
-            bullish=name in ("bullish_engulfing","hammer")
-            bearish=name in ("bearish_engulfing","shooting_star")
-            definitions[name].append(nxt["close"]>b["close"] if bullish else nxt["close"]<b["close"] if bearish else nxt["close"]>b["close"])
-    results=[]
-    for name,events in definitions.items():
-        wins=sum(events);total=len(events)
-        results.append({"pattern":name,"occurrences":total,"wins":wins,
-          "win_rate":wins/total if total else None,"wilson_95_ci":_wilson_interval(wins,total),
-          "latest_observed":bars[-2]["date"].isoformat() if events and len(bars)>1 else None})
-    return {"status":"available" if bars else "no_data","bars":len(bars),
-      "first_date":bars[0]["date"].isoformat() if bars else None,
-      "last_date":bars[-1]["date"].isoformat() if bars else None,"patterns":results,
-      "note":"Descriptive historical daily-candle statistics only; not an intraday trading edge."}
 
 
 def validate_cloud_datasets():
