@@ -1,10 +1,6 @@
 name: NSE F&O automatic ingestion
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/nse-access-probe.yml"
   schedule:
     # 20:30 IST weekdays, after NSE end-of-day reports are normally published.
     - cron: "0 15 * * 1-5"
@@ -47,8 +43,6 @@ jobs:
           requested=os.environ.get("DATE_INPUT","").strip()
           if requested:
               dates=[date.fromisoformat(requested)]
-          elif os.environ.get("EVENT_NAME")=="push":
-              dates=[date(2026,11,9)]
           else:
               today=date.today()
               dates=[today-timedelta(days=i) for i in range(1,8)]
