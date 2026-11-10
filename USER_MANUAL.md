@@ -223,3 +223,14 @@ Use the application as a research and data-validation workspace until the source
 
 ### Market holiday behaviour
 On an NSE holiday, the report uses the latest successfully stored completed trading session as its input date and assigns the report to the next configured NSE trading session. The current calendar includes NSE 2026 equity holidays and the 8-Nov-2026 Muhurat special session. Update `backend/market_calendar.py` from the official NSE annual holiday circular each year. A calendar does not guarantee that source files have downloaded; always check source status and input cutoff date.
+
+
+### Select a market date and expiry
+1. Open **NSE Data Centre** and find **Selected-date NIFTY analysis**.
+2. Select a completed NSE market date. On a holiday, choose the most recent completed trading session rather than the holiday date.
+3. Click **Load date & find expiries**. The backend checks the official sources and downloads any missing date-specific files. Expiry choices appear only when mapped NIFTY CE/PE contracts are available.
+4. Select the required expiry. Set how many strikes below/above ATM to include (default 7 each).
+5. Click **Load & Analyse**. Independent agents analyse price structure, selected-expiry options, participant/FII positioning, futures/volatility and candle patterns. A coordinator combines only agents with usable mapped data.
+6. Review each agent's evidence, the selected strike window, downloaded-source statuses and the combined conclusion.
+
+**Data honesty:** If an official NSE source blocks the Render cloud IP, the app shows the source as missing and does not invent values. Option premiums are EOD closing prices, not live entry quotes. The CE/PE trade plan remains skipped without a reliable live option feed. This analysis is historical research, not a guaranteed forecast.
