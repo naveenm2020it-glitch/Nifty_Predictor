@@ -37,7 +37,7 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
  const [busy,setBusy]=useState(false);
  const [status,setStatus]=useState("Choose a completed NIFTY trading date.");
  const [error,setError]=useState("");
- const [report,setReport]=useState<any>(null);
+ const [report,setReport]=useState<any>(null);\n const [sourceOutcomes,setSourceOutcomes]=useState<any[]>([]);
  useEffect(()=>{fetch(apiBase+"/api/v1/analysis/dates").then(r=>r.json()).then(x=>{const ds=x.dates||[];setAvailableDates(ds);if(ds.length)setTradeDate(ds[0]);}).catch(()=>setError("Could not load available NIFTY dates."));},[apiBase]);
  const runAnalysis=async(selectedExpiry:string)=>{
   const response=await fetch(apiBase+"/api/v1/analysis/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade_date:tradeDate,expiry:selectedExpiry||undefined})});
@@ -65,7 +65,7 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
     setStatus("Downloading and validating NSE reports… "+job.status);
    }
    if(!prepared)throw new Error("NSE download is taking longer than expected. Please retry shortly.");
-   const choices=prepared.expiries||[];setExpiries(choices);
+   const choices=prepared.expiries||[];setExpiries(choices);setSourceOutcomes(prepared.sources||[]);
    if(!choices.length)throw new Error("No NIFTY expiry contracts were found in the downloaded bhavcopy. Check the source status below and try another trading date.");
    if(choices.length>1){setExpiry("");setStatus("Data preparation finished. Multiple expiries found — choose one, then click Load & Analyse again.");return;}
    setExpiry(choices[0]);setStatus("One expiry detected automatically. Running all research agents…");
@@ -76,13 +76,13 @@ function SelectedAnalysisWorkbench({apiBase}:{apiBase:string}){
  return <section className="selected-analysis">
   <div className="selected-analysis-head"><div><b>Selected-date NIFTY analysis</b><small>Select a market date. The system downloads the required NSE reports, detects expiry and runs the complete analysis.</small></div><span className="selected-analysis-tag">ONE-CLICK RESEARCH</span></div>
   <div className="selected-analysis-controls">
-   <label>Market date<input type="date" list="nifty-market-dates" value={tradeDate} onChange={e=>{setTradeDate(e.target.value);setExpiry("");setExpiries([]);setReport(null);setError("");setStatus("Date changed. Click Load & Analyse to fetch its data.");}}/><datalist id="nifty-market-dates">{availableDates.map(x=><option key={x} value={x}/>)}</datalist></label>
+   <label>Market date<input type="date" list="nifty-market-dates" value={tradeDate} onChange={e=>{setTradeDate(e.target.value);setExpiry("");setExpiries([]);setSourceOutcomes([]);setReport(null);setError("");setStatus("Date changed. Click Load & Analyse to fetch its data.");}}/><datalist id="nifty-market-dates">{availableDates.map(x=><option key={x} value={x}/>)}</datalist></label>
    <label>Available NIFTY expiry<select value={expiry} onChange={e=>setExpiry(e.target.value)} disabled={!expiries.length||busy}><option value="">{expiries.length>1?"Select expiry":"Auto-detected after loading"}</option>{expiries.map(x=><option key={x} value={x}>{x}</option>)}</select></label>
    <button className="primary selected-load-button" disabled={!tradeDate||busy} onClick={()=>void loadAndAnalyse()}>{busy?"Loading data & analysing…":expiry?"Analyse selected expiry":"Load & Analyse"}</button>
   </div>
   <div className="selected-analysis-status">{status}</div>
   {error&&<div className="vault-error">{error}</div>}
-  {report&&<div className="selected-analysis-result">
+  {sourceOutcomes.length>0&&<details className="selected-source-details"><summary>Files checked for this date ({sourceOutcomes.length})</summary><pre>{JSON.stringify(sourceOutcomes,null,2)}</pre></details>}\n  {report&&<div className="selected-analysis-result">
    <div className="selected-consensus"><div><small>Combined agent conclusion</small><b>{String(report.coordinator?.bias||"range_or_wait").replace(/_/g," ").toUpperCase()}</b><span>Market date {report.trade_date} · Expiry {report.expiry} · NIFTY close {report.spot_close?.toLocaleString?.("en-IN")??"Unavailable"} · ATM {report.atm_strike??"—"}</span></div><p>{report.coordinator?.consensus_note}</p></div>
    <div className="selected-agent-grid">{Object.entries(report.agents||{}).map(([key,value]:any)=><div className="selected-agent" key={key}><b>{key.replace(/_/g," ")}</b><span className={value.status==="analysed"?"agent-ok":"agent-missing"}>{value.status}</span><strong>{value.bias||"unavailable"}</strong><small>{value.note||"Independent dataset analysis."}</small><details><summary>View evidence</summary><pre>{JSON.stringify(value.evidence||{},null,2)}</pre></details></div>)}</div>
    <div className="selected-chain"><b>Complete selected-expiry option chain</b><small>{report.agents?.options_expiry?.chain?.length||0} strikes · historical closing prices from NSE bhavcopy</small><div className="table-scroll"><table><thead><tr>{["Strike","CE Close","CE OI","CE ΔOI","CE Volume","PE Close","PE OI","PE ΔOI","PE Volume"].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{(report.agents?.options_expiry?.chain||[]).map((x:any)=><tr key={x.strike}><td>{x.strike}</td><td>{x.ce_ltp??"—"}</td><td>{x.ce_oi??"—"}</td><td>{x.ce_change_oi??"—"}</td><td>{x.ce_volume??"—"}</td><td>{x.pe_ltp??"—"}</td><td>{x.pe_oi??"—"}</td><td>{x.pe_change_oi??"—"}</td><td>{x.pe_volume??"—"}</td></tr>)}</tbody></table></div></div>
