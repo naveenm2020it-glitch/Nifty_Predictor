@@ -10,9 +10,9 @@ Last reviewed: 10 November 2026
 
 ## 1. Important: what is ready today
 
-The website and API are deployed. The current working scope includes the research workspace, browser-local file vault, protected cloud archive, official-source daily ingestion, and a new one-click five-year historical download job. The historical downloader has been added to the codebase and requires a configured database/token plus a successful live test before its completeness can be confirmed.
+The website and API are deployed. The working code includes the research workspace, browser-local file vault, protected cloud archive, automatic five-year history job, semantic OHLC validation, technical features, CPU-light walk-forward direction baseline, next-session scenario, PDF/Excel export, historical option-chain summary, futures summary, participant/FII archive views and daily candle-pattern statistics. The downloader and every NSE parser still require successful live verification against the exchange's actual responses before data completeness can be claimed.
 
-**This is not yet a completed next-day prediction product.** The walk-forward training and next-session research baseline are implemented. A model is not available until you import real data, build features and run training; it is registered as validated only if it passes out-of-sample sample-count, fold-count, balanced-accuracy, Brier-score and majority-baseline gates. The prediction and model-performance screens read from the API. Options, participant, futures and pattern screens still require further semantic mapping and dedicated models; do not treat them as live trading signals.
+**This is not yet a completed next-day prediction product.** The walk-forward training and next-session research baseline are implemented. A model is not available until you import real data, build features and run training; it is registered as validated only if it passes out-of-sample sample-count, fold-count, balanced-accuracy, Brier-score and majority-baseline gates. The prediction and model-performance screens read from the API. Options, participant, futures and pattern screens currently provide historical descriptive analytics; their complete source mapping and dedicated predictive models remain unfinished. Do not treat them as live trading signals.
 
 No broker connection, order placement or trade execution is included.
 
@@ -193,7 +193,7 @@ The workflow is scheduled for weekdays at 19:15 and 20:00 India time. Exchange p
 | Local validation reports missing dates | Check date formats, column headers and whether the file includes the expected dataset. |
 | Cloud sync fails | Verify the ingest token, API health, file size (30 MB max) and date column. |
 | Evening workflow fails | Check the GitHub Actions secret and that it matches Render's scheduler token; inspect the job logs. |
-| No prediction appears | Expected at this stage: no validated model is currently available. Do not treat placeholders as signals. |
+| No prediction appears | Check the historical job result, feature backfill, semantic validation and walk-forward training gate. If the model is rejected or blocked, inspect its metrics and missing data; do not force a forecast. |
 
 ## 14. Current module status and remaining work
 
