@@ -316,3 +316,25 @@ footer{display:flex;justify-content:space-between;padding:18px 30px;color:var(--
 .vault-history-research{display:grid;gap:5px;margin-top:9px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)}
 .vault-history-research b{font-size:9px;color:var(--text)}
 .vault-history-research span,.vault-history-research small{font-size:8px;line-height:1.5;color:var(--muted)}
+
+/* Next-session evidence report */
+.agent-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.agent-card{min-width:0;border:1px solid var(--border);background:var(--surface2);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.agent-card>div{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.agent-card b{font:700 10px Manrope;text-transform:capitalize;color:var(--text)}
+.agent-card span{font-size:8px;border-radius:20px;padding:4px 7px;white-space:nowrap;text-transform:uppercase;font-weight:800}
+.agent-ok{color:#12845b;background:#e5f8ef}
+.agent-missing{color:#9a6b1e;background:#fff3dc}
+.dark .agent-ok{color:#58e0aa;background:#123b34}
+.dark .agent-missing{color:#f5c66d;background:#49391f}
+.agent-card small{font-size:9px;color:var(--muted)}
+.agent-card code{font:9px "DM Mono",monospace;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;max-height:90px;overflow:auto}
+.spot-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.spot-plan-grid>div{padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);min-width:0}
+.spot-plan-grid small{display:block;color:var(--muted);font-size:9px;margin-bottom:5px}
+.spot-plan-grid b{font:700 12px "DM Mono",monospace;color:var(--text);overflow-wrap:anywhere}
+.option-plan-status{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)}
+.option-plan-status b{font:800 10px Manrope;color:var(--warning)}
+.option-plan-status span{font-size:9px;color:var(--muted)}
+@media(max-width:900px){.agent-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.agent-grid{grid-template-columns:1fr}.spot-plan-grid{grid-template-columns:1fr}}
