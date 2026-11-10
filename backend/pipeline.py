@@ -394,6 +394,19 @@ def run_evening_ingestion():
                     rows = _csv_rows(raw)
                 if source_key == "participant_oi" and rows:
                     rows = [dict(r, _trade_date=trade_date.isoformat()) for r in rows]
+                if source_key in ("fo_settlement", "fo_volatility") and rows:
+                    filtered_rows = []
+                    for row in rows:
+                        symbol = _get(row, ["TckrSymb", "Symbol", "Ticker", "Underlying", "Undrlyg", "FinInstrmNm"])
+                        if symbol is not None and "NIFTY" not in str(symbol).upper():
+                            continue
+                        item = dict(row)
+                        if symbol is None:
+                            item["_scope_note"] = "Exchange-wide report; symbol column unavailable, NIFTY-only semantic mapping required."
+                        filtered_rows.append(item)
+                    rows = filtered_rows
+                if source_key == "fii_derivatives" and rows:
+                    rows = [dict(r, _scope_note="FII index derivatives statistics are aggregate index-segment context, not a NIFTY-underlying-only position file.") for r in rows]
                 if not rows:
                     raise ValueError("Downloaded report contained no data rows.")
                 outcomes.append(_insert_source(dataset_key, source_key, "NSE India — " + report_name,
