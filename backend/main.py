@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import connect, init_db
-from .pipeline import backfill_historical_features, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download
+from .pipeline import backfill_historical_features, generate_next_session_prediction, historical_download_status, pipeline_runs, run_evening_ingestion, start_five_year_historical_download, train_walk_forward_model
 
 DATASET_KEYS = {"spot_ohlc", "fo_bhavcopy", "participant_oi", "fii_derivatives", "vix_volatility"}
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -373,6 +373,54 @@ def pipeline_readiness():
         "prediction_pipeline": "blocked_until_validation_passes",
         "note": "A file archive is not proof of exchange authenticity or correct field mapping. No model is trained by this endpoint."
     }
+
+
+@app.post("/api/v1/models/train")
+def train_model(ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")):
+    expected = os.getenv("INGEST_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Training is disabled until INGEST_API_TOKEN is configured.")
+    if not ingest_token or not hmac.compare_digest(ingest_token, expected):
+        raise HTTPException(status_code=401, detail="Ingest token is missing or invalid.")
+    try:
+        return train_walk_forward_model()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Walk-forward training failed: " + str(exc)[:300])
+
+
+@app.post("/api/v1/predictions/generate")
+def generate_prediction(ingest_token: Optional[str] = Header(None, alias="X-Ingest-Token")):
+    expected = os.getenv("INGEST_API_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Prediction generation is disabled until INGEST_API_TOKEN is configured.")
+    if not ingest_token or not hmac.compare_digest(ingest_token, expected):
+        raise HTTPException(status_code=401, detail="Ingest token is missing or invalid.")
+    try:
+        return generate_next_session_prediction()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Prediction generation failed: " + str(exc)[:300])
+
+
+@app.get("/api/v1/research/summary")
+def research_summary():
+    with connect() as conn:
+        latest_feature = conn.execute("SELECT trade_date,features FROM daily_feature_snapshots ORDER BY trade_date DESC LIMIT 1").fetchone()
+        latest_model = conn.execute("""SELECT id,model_name,version,training_cutoff,validation_metrics,status,created_at
+          FROM model_versions ORDER BY created_at DESC LIMIT 1""").fetchone()
+        latest_prediction = conn.execute("""SELECT id,session_date,generated_at,input_cutoff,scenarios,status
+          FROM predictions ORDER BY generated_at DESC LIMIT 1""").fetchone()
+        feature_count = conn.execute("SELECT COUNT(*) AS count FROM daily_feature_snapshots").fetchone()["count"]
+        spot_count = conn.execute("SELECT COUNT(DISTINCT trade_date) AS count FROM dataset_records WHERE dataset_key='spot_ohlc'").fetchone()["count"]
+    return {
+      "spot_trading_dates": int(spot_count or 0), "feature_snapshots": int(feature_count or 0),
+      "latest_feature_date": latest_feature["trade_date"].isoformat() if latest_feature else None,
+      "latest_model": dict(latest_model) if latest_model else None,
+      "latest_prediction": dict(latest_prediction) if latest_prediction else None,
+      "training_available": int(feature_count or 0) >= 301,
+      "prediction_available": bool(latest_model and latest_model["status"] == "validated"),
+      "important_scope": "The current trained baseline predicts next available daily NIFTY close direction only. It does not model option premiums, intraday 15-minute targets, Greeks or execution."
+    }
+
 
 @app.get("/api/v1/models")
 def list_models():
