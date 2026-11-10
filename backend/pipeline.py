@@ -19,6 +19,7 @@ import xlrd
 
 from .db import connect
 from .storage import save_temporary_file
+from .market_calendar import is_nse_trading_session, next_nse_trading_session, nse_session_calendar_note
 
 log = logging.getLogger("nifty_iq.pipeline")
 IST = ZoneInfo("Asia/Kolkata")
@@ -88,7 +89,7 @@ def _nse_index_archive_rows(session, start, end, index_name):
         "Referer": NSE_HOME + "/all-reports",
     }
     while day <= end:
-        if day.weekday() < 5:
+        if is_nse_trading_session(day):
             filename = "ind_close_all_" + day.strftime("%d%m%Y") + ".csv"
             urls = [
                 "https://nsearchives.nseindia.com/content/indices/" + filename,
@@ -1129,8 +1130,8 @@ def generate_daily_evidence_report():
     if options["status"]=="analysed": votes.append(1 if options["bias"]=="bullish" else -1 if options["bias"]=="bearish" else 0)
     if participant["status"]=="analysed": votes.append(1 if participant["bias"]=="bullish" else -1 if participant["bias"]=="bearish" else 0)
     total=sum(votes); bias="bullish" if total>=2 else "bearish" if total<=-2 else "range_or_wait"
-    next_day=trade_date+timedelta(days=1)
-    while next_day.weekday()>=5: next_day+=timedelta(days=1)
+    next_day=next_nse_trading_session(trade_date)
+    calendar_note=nse_session_calendar_note(trade_date)
     quality={"spot_sessions_used":len(candles),"fo_rows":len(fo),"participant_rows":len(participants),
       "fii_rows":len(fii),"vix_rows":len(vix),"missing_agents":[k for k,v in agents.items() if v["status"] in ("missing","missing_or_unmapped")]}
     scenarios={"bias":bias,"probability_up":None,"probability_down":None,"reference_close":close,"atr14":round(atr,2),
@@ -1143,7 +1144,7 @@ def generate_daily_evidence_report():
       "latest_input_date":trade_date.isoformat(),
       "option_trade_plan":{"status":"skipped_no_live_market_feed","instrument":None,"option_type":None,"strike":None,"expiry":None,"entry_premium":None,"target_premium":None,"stop_loss_premium":None,"reason":"The system has no reliable next-session live option quote or execution-time confirmation. EOD option-chain data alone cannot establish tomorrow\u2019s executable CE/PE premium. No CE/PE BUY call will be issued; use the NIFTY spot scenario levels only."},
       "spot_trade_plan":{"status":"conditional_next_session_levels","bullish_trigger":round(last["high"],2),"bullish_invalidation":round(last["low"],2),"bearish_trigger":round(last["low"],2),"bearish_invalidation":round(last["high"],2),"note":"These are NIFTY spot reference levels derived from the latest completed session, not live entry signals. Confirm price behaviour independently during the next session."},
-      "warning":"Daily evidence-based research, not a calibrated probability or guaranteed forecast. Next session date is a weekday estimate; check NSE holidays."}
+      "market_calendar_note":calendar_note,"next_session_date":next_day.isoformat(),"warning":"Daily evidence-based research, not a calibrated probability or guaranteed forecast. Next session date uses the configured NSE 2026 holiday calendar; confirm future-year exchange holidays."}
     with connect() as conn:
         old=conn.execute("SELECT id FROM predictions WHERE session_date=%s AND model_version_id IS NULL ORDER BY generated_at DESC LIMIT 1",(next_day,)).fetchone()
         if old:
